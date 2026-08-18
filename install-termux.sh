@@ -8,7 +8,7 @@ BIN_DIR="$PREFIX_DIR/bin"
 printf '%s\n' "[1/4] Updating Termux packages..."
 pkg update -y
 printf '%s\n' "[2/4] Installing Python, unzip, and Rust..."
-pkg install -y python unzip rust lua53
+pkg install -y python unzip rust
 
 printf '%s\n' "[3/4] Installing repak from its upstream repository..."
 # repak_cli exposes the executable named `repak`.
