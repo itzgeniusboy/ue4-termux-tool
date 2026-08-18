@@ -12,32 +12,45 @@ The project delegates UE4 PAK parsing and writing to [repak](https://github.com/
 | `repack` | Create a new UE4 `.pak` from an unpacked directory. |
 | `inject` | Unpack a PAK, copy Lua files into it, and create a new PAK. |
 
-## Fast setup for new Termux users
+## First-time setup for new Termux users
 
-Install Termux from a trusted source such as [F-Droid](https://f-droid.org/packages/com.termux/) or the [official Termux project](https://github.com/termux/termux-app). Open Termux and run this one command:
+Install Termux from a trusted source such as [F-Droid](https://f-droid.org/packages/com.termux/) or the [official Termux project](https://github.com/termux/termux-app). Open Termux and enter these commands **one by one**:
+
+**Step 1 — update Termux:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/itzgeniusboy/ue4-termux-tool/main/setup.sh | bash
+pkg update -y
 ```
 
-The public repository does not require GitHub login. The setup script updates Termux packages, installs Git/Python/unzip/Rust, requests storage permission, clones the repository, builds `repak`, and installs `tool`.
-
-If `curl` is not installed, run:
+**Step 2 — install the downloader:**
 
 ```bash
 pkg install -y curl
+```
+
+**Step 3 — allow phone storage access:**
+
+```bash
+termux-setup-storage
+```
+
+Press **Allow** when Android asks for permission.
+
+**Step 4 — download and install the tool:**
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/itzgeniusboy/ue4-termux-tool/main/setup.sh | bash
 ```
 
-For a more cautious setup, download and inspect the script before running it:
+The public repository does not require GitHub login. The setup automatically installs the required packages, downloads the project, builds `repak`, installs the `tool` command, verifies the installation, and shows any error clearly. The first installation can take several minutes because Rust builds `repak`; do not close Termux during that step.
+
+**Step 5 — open the tool:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/itzgeniusboy/ue4-termux-tool/main/setup.sh -o setup.sh
-less setup.sh
-bash setup.sh
+tool
 ```
 
-The first installation may take several minutes because Rust builds `repak`. Do not close Termux while it is building.
+After the first setup, only `tool` is needed. The setup can be run again later to repair or refresh the installation.
 
 ## Manual setup
 
