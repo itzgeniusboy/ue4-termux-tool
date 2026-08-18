@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Focused UE4 Termux helper for authorized projects.
+"""Friendly UE4 Termux helper for authorized projects.
 
-Supported workflows are intentionally limited to PAK unpacking, PAK repacking,
-and Lua file injection. UE4 PAK binary work is delegated to repak.
+The tool supports PAK unpacking, PAK repacking, and Lua injection. Running
+`ue4tool` without a subcommand opens a guided menu.
 """
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ import sys
 import tempfile
 
 APP_NAME = "ue4tool"
+DOWNLOAD_DIR = Path("/sdcard/Download")
 
 
 def fail(message: str, code: int = 2) -> None:
@@ -53,7 +54,7 @@ def safe_destination(root: Path, relative: str | PurePosixPath) -> Path:
 def repak_binary(explicit: str | None) -> str:
     candidate = explicit or os.environ.get("REPAK_BIN") or "repak"
     if os.path.sep not in candidate and shutil.which(candidate) is None:
-        fail("repak was not found. Run ./install-termux.sh, or pass --repak /path/to/repak")
+        fail("repak was not found. Run bash install-termux.sh, then try again")
     if os.path.sep in candidate and not Path(candidate).expanduser().is_file():
         fail(f"repak executable not found: {candidate}")
     return str(Path(candidate).expanduser()) if os.path.sep in candidate else candidate
@@ -81,24 +82,26 @@ def pak_unpack(args: argparse.Namespace) -> None:
     pak = require_file(Path(args.pak), "PAK")
     output_value = args.output_flag or args.output
     output = Path(output_value).expanduser() if output_value else pak.with_suffix("")
+    print(f"[1/1] Unpacking {pak.name}...")
     command = ["unpack", str(pak), "--output", str(output), "--strip-prefix", args.strip_prefix, "--force"]
     if args.quiet:
         command.append("--quiet")
     run_repak(repak_binary(args.repak), args.aes_key, command)
-    print(f"Unpacked PAK to {output}")
+    print(f"Done. Files extracted to: {output}")
 
 
 def pak_repack(args: argparse.Namespace) -> None:
     source = require_dir(Path(args.source), "source directory")
     output = Path(args.output).expanduser()
     output.parent.mkdir(parents=True, exist_ok=True)
+    print(f"[1/1] Repacking {source}...")
     command = ["pack", str(source), str(output), "--version", args.version, "--mount-point", args.mount_point]
     if args.compression:
         command += ["--compression", args.compression]
     if args.quiet:
         command.append("--quiet")
     run_repak(repak_binary(args.repak), None, command)
-    print(f"Repacked {source} to {output}")
+    print(f"Done. PAK created at: {output}")
 
 
 def copy_lua_files(source: Path, staging: Path, target_prefix: str, target_file: str | None) -> int:
@@ -139,14 +142,6 @@ def copy_lua_files(source: Path, staging: Path, target_prefix: str, target_file:
     return count
 
 
-def backup_file(path: Path) -> Path:
-    import datetime as dt
-    stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-    backup = path.with_name(path.name + f".bak.{stamp}")
-    shutil.copy2(path, backup)
-    return backup
-
-
 def lua_inject(args: argparse.Namespace) -> None:
     pak = require_file(Path(args.pak), "PAK")
     source = Path(args.lua_source).expanduser()
@@ -156,21 +151,24 @@ def lua_inject(args: argparse.Namespace) -> None:
     output = Path(output_value).expanduser() if output_value else pak.with_name(pak.stem + ".lua.pak")
     if output.resolve() == pak.resolve():
         if not args.in_place:
-            fail("refusing to overwrite the original PAK; choose --output or add --in-place")
-        backup = backup_file(pak)
-        print(f"Backup created: {backup}")
+            fail("refusing to overwrite the original PAK; add --in-place to confirm direct replacement")
+        print("Warning: in-place mode will replace the original PAK without creating a backup.", file=sys.stderr)
 
     binary = repak_binary(args.repak)
     with tempfile.TemporaryDirectory(prefix="ue4tool-") as temp_name:
         staging = Path(temp_name) / "pak-files"
+        print("[1/3] Unpacking source PAK...")
         unpack_cmd = ["unpack", str(pak), "--output", str(staging), "--strip-prefix", args.strip_prefix, "--force", "--quiet"]
         run_repak(binary, args.aes_key, unpack_cmd)
+        print("[2/3] Copying Lua files...")
         count = copy_lua_files(source, staging, args.target_prefix, args.target_file)
+        print(f"      Lua files selected: {count}")
+        print("[3/3] Creating output PAK...")
         pack_cmd = ["pack", str(staging), str(output), "--version", args.version, "--mount-point", args.mount_point]
         if args.compression:
             pack_cmd += ["--compression", args.compression]
         run_repak(binary, None, pack_cmd)
-    print(f"Injected {count} Lua file(s) into {output}")
+    print(f"Done. Injected {count} Lua file(s) into: {output}")
     if args.aes_key:
         print("Note: repak can read with the supplied key, but this tool does not create encrypted output.", file=sys.stderr)
 
@@ -189,8 +187,8 @@ def add_pack_options(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog=APP_NAME, description="Focused UE4 PAK unpack, repack, and Lua inject tool for Termux")
-    sub = parser.add_subparsers(dest="command", required=True)
+    parser = argparse.ArgumentParser(prog=APP_NAME, description="Friendly UE4 PAK unpack, repack, and Lua inject tool for Termux")
+    sub = parser.add_subparsers(dest="command")
 
     p = sub.add_parser("unpack", help="extract a UE4 PAK; usage: ue4tool unpack game.pak [folder]")
     p.add_argument("pak")
@@ -213,7 +211,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("lua_source", help="one Lua file or a directory containing Lua files")
     p.add_argument("output", nargs="?", help="new PAK path; default: <input>.lua.pak")
     p.add_argument("--output", "-o", dest="output_flag", help="same as the optional output path")
-    p.add_argument("--in-place", action="store_true", help="allow replacing the input after creating a backup")
+    p.add_argument("--in-place", action="store_true", help="replace the input directly without creating a backup")
     p.add_argument("--target-prefix", default="Script", help="directory inside the PAK for injected Lua files")
     p.add_argument("--target-file", help="target filename for one Lua source file")
     p.add_argument("--strip-prefix", default="../../../")
@@ -226,8 +224,129 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def storage_dir() -> Path:
+    if DOWNLOAD_DIR.is_dir():
+        return DOWNLOAD_DIR
+    return Path.cwd()
+
+
+def choose_path(label: str, suffix: str | None = None, directory: bool = False) -> Path:
+    base = storage_dir()
+    candidates = []
+    if base.is_dir():
+        candidates = sorted(
+            p for p in base.iterdir()
+            if (p.is_dir() if directory else p.is_file())
+            and (suffix is None or p.suffix.lower() == suffix.lower())
+        )
+    if candidates:
+        print(f"\n{label} (default folder: {base})")
+        for index, candidate in enumerate(candidates, 1):
+            print(f"  {index}) {candidate.name}")
+        answer = input("Number select karein ya full path likhein: ").strip()
+        if answer.isdigit() and 1 <= int(answer) <= len(candidates):
+            return candidates[int(answer) - 1]
+        if answer:
+            return Path(answer).expanduser()
+    return Path(input(f"{label} ka full path likhein: ").strip()).expanduser()
+
+
+def ask_default(prompt: str, default: str) -> str:
+    answer = input(f"{prompt} [{default}]: ").strip()
+    return answer or default
+
+
+def dependency_status() -> bool:
+    print("\nDependency check:")
+    print(f"  Python: {sys.version.split()[0]} OK")
+    git_ok = shutil.which("git") is not None
+    repak_ok = shutil.which(os.environ.get("REPAK_BIN", "repak")) is not None
+    print(f"  Git: {'OK' if git_ok else 'missing'}")
+    print(f"  repak: {'OK' if repak_ok else 'missing'}")
+    if not repak_ok:
+        print("\nrepak missing hai. Pehle ye command run karein:")
+        print("  bash ~/ue4-termux-tool/install-termux.sh")
+        return False
+    return True
+
+
+def make_interactive_args(command: str) -> argparse.Namespace:
+    if command == "unpack":
+        pak = choose_path("PAK file", ".pak")
+        output = ask_default("Output folder", str(pak.with_suffix("")))
+        return argparse.Namespace(
+            pak=str(pak), output=output, output_flag=None, strip_prefix="../../../",
+            quiet=False, repak=None, aes_key=None,
+        )
+    if command == "repack":
+        source = choose_path("Unpacked PAK folder", directory=True)
+        output = ask_default("Output PAK", str(source.with_name(source.name + ".pak")))
+        return argparse.Namespace(
+            source=str(source), output=output, version="v8b", compression=None,
+            mount_point="../../../", quiet=False, repak=None,
+        )
+    pak = choose_path("PAK file", ".pak")
+    default_lua = storage_dir() / "lua"
+    lua_source = ask_default("Lua folder or file", str(default_lua))
+    output = ask_default("Output PAK", str(pak.with_name(pak.stem + ".lua.pak")))
+    target_prefix = ask_default("PAK Lua folder", "Script")
+    return argparse.Namespace(
+        pak=str(pak), lua_source=lua_source, output=output, output_flag=None,
+        in_place=False, target_prefix=target_prefix, target_file=None,
+        strip_prefix="../../../", mount_point="../../../", version="v8b",
+        compression=None, repak=None, aes_key=None,
+    )
+
+
+def update_project() -> None:
+    project = Path(__file__).resolve().parent
+    if not (project / ".git").exists():
+        print(f"Git project not found at {project}. Re-clone the public repository first.")
+        return
+    print("Updating tool...")
+    result = subprocess.run(["git", "-C", str(project), "pull", "--ff-only"], check=False)
+    if result.returncode == 0:
+        print("Update complete. Run install-termux.sh if the installer changed.")
+
+
+def interactive_menu() -> None:
+    print("\n========================================")
+    print("        UE4 TERMUX TOOL")
+    print("========================================")
+    print("1) PAK Unpack")
+    print("2) PAK Repack")
+    print("3) Lua Inject")
+    print("4) Update Tool")
+    print("0) Exit")
+    choice = input("\nOption select karein: ").strip()
+    if choice == "0":
+        print("Bye.")
+        return
+    if choice == "4":
+        update_project()
+        return
+    command = {"1": "unpack", "2": "repack", "3": "inject"}.get(choice)
+    if not command:
+        print("Invalid option.")
+        return
+    if not dependency_status():
+        return
+    try:
+        args = make_interactive_args(command)
+        {"unpack": pak_unpack, "repack": pak_repack, "inject": lua_inject}[command](args)
+    except (EOFError, KeyboardInterrupt):
+        print("\nCancelled.")
+
+
 def main() -> int:
-    args = build_parser().parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
+    if not args.command:
+        if sys.stdin.isatty():
+            interactive_menu()
+        else:
+            parser.print_help()
+        return 0
     try:
         args.func(args)
     except KeyboardInterrupt:
