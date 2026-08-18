@@ -16,7 +16,11 @@ cargo install --git https://github.com/trumank/repak --locked --bin repak --no-d
 
 printf '%s\n' "[4/4] Installing ue4tool command..."
 mkdir -p "$BIN_DIR"
-install -m 0755 "$SCRIPT_DIR/ue4tool.py" "$BIN_DIR/ue4tool"
+cat > "$BIN_DIR/ue4tool" <<EOF
+#!/data/data/com.termux/files/usr/bin/bash
+exec python3 "$SCRIPT_DIR/ue4tool.py" "\$@"
+EOF
+chmod 0755 "$BIN_DIR/ue4tool"
 
 printf '%s\n' "Done. If Termux cannot read /sdcard, run: termux-setup-storage"
 printf '%s\n' "Try: ue4tool --help"

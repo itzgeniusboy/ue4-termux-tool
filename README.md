@@ -63,11 +63,13 @@ git clone https://github.com/itzgeniusboy/ue4-termux-tool.git
 
 ## Interactive menu — easiest method
 
-After setup, run:
+After setup, run this single command:
 
 ```bash
 ue4tool
 ```
+
+The command opens the menu immediately and starts a non-blocking update check in the background. It checks the public GitHub repository, uses a lock so duplicate checks do not run together, and only rebuilds the tool when a new commit is found. The update log is stored at `~/.cache/ue4tool-update.log`. To skip automatic updating for one launch, use `UE4TOOL_NO_AUTO_UPDATE=1 ue4tool`.
 
 The menu provides:
 
@@ -212,13 +214,13 @@ ue4tool inject --help
 
 ## Update the tool
 
-From Termux, use the update script:
+Opening `ue4tool` automatically checks for updates in the background. You can also select option `4` for a foreground update, or run this command manually:
 
 ```bash
 bash ~/ue4-termux-tool/update-termux.sh
 ```
 
-Or open `ue4tool`, select option `4`, and let the menu update the project. The update pulls the public repository and rebuilds the installed `repak` binary when needed.
+The update script pulls the public repository and rebuilds the installed `repak` binary only when the repository changed.
 
 ## Troubleshooting
 

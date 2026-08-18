@@ -10,9 +10,11 @@ import argparse
 import os
 from pathlib import Path, PurePosixPath
 import shutil
+import shlex
 import subprocess
 import sys
 import tempfile
+import time
 
 APP_NAME = "ue4tool"
 DOWNLOAD_DIR = Path("/sdcard/Download")
@@ -300,13 +302,60 @@ def make_interactive_args(command: str) -> argparse.Namespace:
 
 def update_project() -> None:
     project = Path(__file__).resolve().parent
-    if not (project / ".git").exists():
-        print(f"Git project not found at {project}. Re-clone the public repository first.")
+    script = project / "update-termux.sh"
+    if not script.is_file():
+        print(f"Update script not found at {script}. Re-clone the public repository first.")
         return
     print("Updating tool...")
-    result = subprocess.run(["git", "-C", str(project), "pull", "--ff-only"], check=False)
-    if result.returncode == 0:
-        print("Update complete. Run install-termux.sh if the installer changed.")
+    result = subprocess.run(["bash", str(script)], cwd=project, check=False)
+    if result.returncode != 0:
+        print("Update failed. You can retry with: bash ~/ue4-termux-tool/update-termux.sh")
+
+
+def start_background_update() -> None:
+    """Start one detached update check without delaying the interactive menu."""
+    if os.environ.get("UE4TOOL_NO_AUTO_UPDATE") == "1":
+        return
+    project = Path(__file__).resolve().parent
+    update_script = project / "update-termux.sh"
+    if not (project / ".git").is_dir() or not update_script.is_file() or shutil.which("git") is None:
+        return
+    cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    cache.mkdir(parents=True, exist_ok=True)
+    lock = cache / "ue4tool-update.lock"
+    log = cache / "ue4tool-update.log"
+    try:
+        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        os.close(fd)
+    except FileExistsError:
+        try:
+            if time.time() - lock.stat().st_mtime > 3600:
+                lock.unlink()
+                fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                os.close(fd)
+            else:
+                return
+        except (FileNotFoundError, OSError):
+            return
+    command = (
+        f"bash {shlex.quote(str(update_script))} > {shlex.quote(str(log))} 2>&1; "
+        f"rm -f {shlex.quote(str(lock))}"
+    )
+    try:
+        subprocess.Popen(
+            ["bash", "-c", command],
+            cwd=project,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        print("[update] Background update check started.")
+    except OSError:
+        try:
+            lock.unlink()
+        except OSError:
+            pass
 
 
 def interactive_menu() -> None:
@@ -343,6 +392,7 @@ def main() -> int:
     args = parser.parse_args()
     if not args.command:
         if sys.stdin.isatty():
+            start_background_update()
             interactive_menu()
         else:
             parser.print_help()

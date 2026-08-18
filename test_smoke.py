@@ -6,6 +6,13 @@ import tempfile
 ROOT = Path(__file__).resolve().parent
 TOOL = ROOT / "ue4tool.py"
 
+source_text = TOOL.read_text(encoding="utf-8")
+assert "def backup_file" not in source_text
+assert "start_background_update" in source_text
+assert "ue4tool-update.lock" in source_text
+for script in ("setup.sh", "update-termux.sh", "install-termux.sh"):
+    subprocess.run(["bash", "-n", str(ROOT / script)], check=True)
+
 with tempfile.TemporaryDirectory(prefix="ue4tool-test-") as tmp:
     base = Path(tmp)
     source = base / "unpacked"
@@ -59,4 +66,8 @@ else:
     assert "Script/MyMod/init.lua" in text
     assert "Script/MyMod/player.lua" in text
 
+help_result = subprocess.run([sys.executable, str(TOOL), "--help"], check=True, capture_output=True, text=True)
+assert "unpack" in help_result.stdout
+assert "repack" in help_result.stdout
+assert "inject" in help_result.stdout
 print("focused-smoke-tests-ok")
