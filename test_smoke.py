@@ -4,9 +4,10 @@ import os
 import subprocess
 import sys
 import tempfile
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ue4tool import sanitize_diagnostic_text
+from ue4tool import _send_report, sanitize_diagnostic_text
 
 ROOT = Path(__file__).resolve().parent
 TOOL = ROOT / "ue4tool.py"
@@ -92,6 +93,29 @@ with tempfile.TemporaryDirectory(prefix="tool-report-test-") as report_tmp:
     report_data = json.loads(reports[0].read_text(encoding="utf-8"))
     assert report_data["command"] == "unpack"
     assert "PAK contents" in report_data["privacy"]
+
+    no_report_env = {
+        "TOOL_NO_REPORT": "1",
+        "UE4TOOL_REPORT_ENDPOINT": "https://relay.example/api/report",
+    }
+    with patch.dict(os.environ, no_report_env, clear=False), patch("ue4tool.urlrequest.urlopen") as blocked_send:
+        assert _send_report(reports[0]) is False
+        blocked_send.assert_not_called()
+
+    with tempfile.TemporaryDirectory(prefix="tool-consent-test-") as consent_tmp:
+        fake_response = MagicMock()
+        fake_response.__enter__.return_value.status = 202
+        send_env = {
+            "TOOL_NO_REPORT": "0",
+            "UE4TOOL_REPORT_ENDPOINT": "https://relay.example/api/report",
+            "XDG_CONFIG_HOME": consent_tmp,
+        }
+        with patch.dict(os.environ, send_env, clear=False), patch("builtins.input", return_value="y"), patch("ue4tool.urlrequest.urlopen", return_value=fake_response) as sent:
+            assert _send_report(reports[0]) is True
+            outgoing = json.loads(sent.call_args.args[0].data.decode("utf-8"))
+            assert set(outgoing) == {"operation", "error_message", "tool_version", "exit_code", "platform"}
+            assert "/sdcard/private/missing.pak" not in outgoing["error_message"]
+        assert (Path(consent_tmp) / "ue4tool" / "report_consent").read_text(encoding="utf-8").strip() == "yes"
 
 help_result = subprocess.run([sys.executable, str(TOOL), "--help"], check=True, capture_output=True, text=True)
 assert "unpack" in help_result.stdout

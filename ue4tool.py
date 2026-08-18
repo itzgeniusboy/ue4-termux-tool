@@ -17,9 +17,12 @@ import subprocess
 import sys
 import tempfile
 import time
+from urllib import request as urlrequest
+from urllib.parse import urlparse
 
 APP_NAME = "tool"
 DOWNLOAD_DIR = Path("/sdcard/Download")
+REPORT_ENDPOINT_ENV = "UE4TOOL_REPORT_ENDPOINT"
 
 
 class ToolError(RuntimeError):
@@ -55,6 +58,88 @@ def write_diagnostic(command: str, error: str, code: int) -> Path:
     }
     report.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     return report
+
+
+def report_consent_file() -> Path:
+    config_root = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    return config_root / "ue4tool" / "report_consent"
+
+
+def reporting_consent() -> bool:
+    """Read or request the user's one-time permission for anonymous reporting."""
+    consent_path = report_consent_file()
+    try:
+        saved = consent_path.read_text(encoding="utf-8").strip().lower()
+    except OSError:
+        saved = ""
+
+    if saved in {"yes", "no"}:
+        return saved == "yes"
+
+    try:
+        answer = input("Send anonymous bug report? [y/N] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        answer = ""
+    consent = "yes" if answer in {"y", "yes"} else "no"
+    consent_path.parent.mkdir(parents=True, exist_ok=True)
+    consent_path.write_text(consent + "\n", encoding="utf-8")
+    return consent == "yes"
+
+
+def tool_version() -> str:
+    project = Path(__file__).resolve().parent
+    try:
+        revision = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=project,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if revision.returncode == 0 and revision.stdout.strip():
+            return f"git-{revision.stdout.strip()}"
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return "unknown"
+
+
+def _send_report(report_path: Path) -> bool:
+    """Send only the sanitized diagnostic allowlist after explicit user consent."""
+    if os.environ.get("TOOL_NO_REPORT") == "1":
+        return False
+
+    endpoint = os.environ.get(REPORT_ENDPOINT_ENV, "").strip()
+    parsed = urlparse(endpoint)
+    if parsed.scheme != "https" or not parsed.netloc:
+        return False
+    if not reporting_consent():
+        return False
+
+    try:
+        local_report = json.loads(report_path.read_text(encoding="utf-8"))
+        payload = {
+            "operation": local_report["command"],
+            "error_message": local_report["error"],
+            "tool_version": tool_version(),
+            "exit_code": int(local_report["exit_code"]),
+            "platform": "Termux Android" if local_report.get("termux") else sys.platform,
+        }
+        encoded = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        request = urlrequest.Request(
+            endpoint,
+            data=encoded,
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            method="POST",
+        )
+        with urlrequest.urlopen(request, timeout=5) as response:
+            if response.status not in {200, 201, 202}:
+                return False
+        print("Anonymous diagnostic report sent.", file=sys.stderr)
+        return True
+    except (KeyError, OSError, ValueError, urlrequest.URLError):
+        print("Anonymous diagnostic report could not be sent.", file=sys.stderr)
+        return False
 
 
 def require_file(path: Path, label: str) -> Path:
@@ -358,6 +443,7 @@ def execute_with_recovery(command: str, handler, args: argparse.Namespace) -> bo
         report = write_diagnostic(command, str(exc), exc.code)
         print(f"{APP_NAME}: error: {sanitize_diagnostic_text(str(exc))}", file=sys.stderr)
         print(f"Diagnostic saved locally: {report}", file=sys.stderr)
+        _send_report(report)
         if os.environ.get("TOOL_NO_AUTO_RETRY") == "1":
             return False
         print("Trying one tool update and retry...")

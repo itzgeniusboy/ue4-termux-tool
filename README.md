@@ -261,7 +261,7 @@ If PAK unpacking fails, confirm that the PAK is not corrupted, that the exact pr
 
 ## Automatic bug recovery
 
-When `tool unpack`, `tool repack`, or `tool inject` encounters a handled error, it saves a small diagnostic report locally, checks for a newer public version, and retries the same operation once. This can automatically recover bugs that have already been fixed and published. A new bug still needs the report to be shared manually so it can be diagnosed and fixed in a future update.
+When `tool unpack`, `tool repack`, or `tool inject` encounters a handled error, it saves a small diagnostic report locally, checks for a newer public version, and retries the same operation once. This can automatically recover bugs that have already been fixed and published.
 
 Reports are stored in:
 
@@ -269,13 +269,29 @@ Reports are stored in:
 ~/.local/state/tool/error-<timestamp>.json
 ```
 
-The report contains only the operation name, sanitized error text, exit code, Python version, platform, and Termux status. It does **not** contain PAK contents, Lua source, AES keys, or full file paths. To disable the automatic retry for one command:
+The local report contains only the operation name, sanitized error text, exit code, Python version, platform, and Termux status. It does **not** contain PAK contents, Lua source, AES keys, or full file paths. To disable the automatic retry for one command:
 
 ```bash
 TOOL_NO_AUTO_RETRY=1 tool unpack game.pak
 ```
 
-After a failed command, send the newest JSON report here. Do not paste AES keys or private Lua/PAK files.
+### Optional anonymous relay
+
+When the maintainer-configured relay is available, the first handled failure asks:
+
+```text
+Send anonymous bug report? [y/N]
+```
+
+Answering `y` saves the choice in `~/.config/ue4tool/report_consent`. The tool then sends **only** the operation, sanitized error message, tool version, exit code, and platform. It never sends AES keys, PAK contents, Lua source, or full local paths. A report is sent over HTTPS and the server independently checks the same privacy rules before forwarding any diagnostic.
+
+To permanently suppress relay reporting for one command, even when consent was given earlier, run:
+
+```bash
+TOOL_NO_REPORT=1 tool unpack game.pak
+```
+
+Advanced maintainers can configure the HTTPS relay address with `UE4TOOL_REPORT_ENDPOINT`. Do not set it to an untrusted URL.
 
 ## Repository
 
