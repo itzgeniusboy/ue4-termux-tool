@@ -16,7 +16,7 @@ pkg install git -y
 bash install-termux.sh
 ```
 
-The installer installs Python, Rust, and `repak`, then places the wrapper at `$PREFIX/bin/ue4tool`. Building `repak` from source can take time and storage on a phone. If you already have a compatible `repak` binary, skip the Rust build and either put it on `PATH` or pass `--repak /absolute/path/to/repak`.
+The installer installs Python, Rust, Lua 5.3, and `repak`, then places the wrapper at `$PREFIX/bin/ue4tool`. Building `repak` from source can take time and storage on a phone. If you already have a compatible `repak` binary, skip the Rust build and either put it on `PATH` or pass `--repak /absolute/path/to/repak`.
 
 Use shared storage paths such as `/sdcard/Download/project.obb` or `/sdcard/Android/obb/com.example.game/main.1.com.example.game.obb`. Android documents the usual OBB location as `<shared-storage>/Android/obb/<package-name>/`.[^1]
 
@@ -29,8 +29,12 @@ Use shared storage paths such as `/sdcard/Download/project.obb` or `/sdcard/Andr
 | `pak-info` | Show PAK version, mount point, encryption, compression, and entry count. |
 | `pak-list` | List files inside a PAK. |
 | `pak-unpack` | Extract a PAK through `repak`. |
+| `pak-hash` | Print SHA-256 hashes for PAK entries through `repak`. |
 | `pak-pack` | Create a PAK from a directory. |
 | `lua-inject` | Unpack a PAK, copy `.lua` files into a target directory, and repack a new PAK. |
+| `lua-validate` | Syntax-check standard Lua 5.3 source files, recursively. |
+| `lua-compile` | Compile standard Lua 5.3 source into bytecode, preserving relative paths. |
+| `lua-zip` | Package a Lua output directory into a ZIP archive. |
 
 ### OBB workflow
 
@@ -101,6 +105,48 @@ ue4tool lua-inject original.pak init.lua \
 
 The injection command unpacks to a temporary directory, copies only `.lua` files, and repacks to the output path. It does not modify the source PAK unless `--in-place` is explicitly used. When in-place mode is used, a timestamped `.bak` backup is created first. Because a PAK is repacked, select the correct version and mount point for your project; for production builds, test the result in a disposable copy before replacing the original asset package.
 
+## Lua validation and compilation
+
+The attached reference source included a useful generic workflow around compiler detection, syntax pre-flight checks, skipping already-compiled files, per-file timing, and operation reports. This project includes those neutral features, but does not include its branding, device locking, hard-coded secrets, custom game bytecode conversion, or game-specific modification routines.
+
+Install Lua 5.3 through the installer or manually:
+
+```bash
+pkg install lua53
+```
+
+Validate one file or an entire directory recursively:
+
+```bash
+ue4tool lua-validate ./lua --report reports/validate.json
+```
+
+Compile Lua 5.3 source to a separate directory while preserving its relative paths:
+
+```bash
+ue4tool lua-compile ./lua --out ./compiled --report reports/compile.json
+```
+
+Already-compiled files are skipped. Use `--force` if an output file should be replaced. If Lua is installed in a non-standard location, pass `--luac /path/to/luac5.3` or set `LUAC_BIN`.
+
+Package a compiled directory for transfer or archival:
+
+```bash
+ue4tool lua-zip ./compiled ./compiled-lua.zip
+```
+
+The JSON report contains the operation mode, UTC timestamp, per-file status, input/output byte counts, and elapsed time. This is intended for repeatable project builds and troubleshooting, not for bypassing protected game bytecode.
+
+### PAK integrity comparison
+
+Use the new hash command to record content hashes before and after a project packaging change:
+
+```bash
+ue4tool pak-hash project.pak > before.hashes.txt
+ue4tool pak-hash project-lua.pak > after.hashes.txt
+diff -u before.hashes.txt after.hashes.txt
+```
+
 ## Encrypted PAKs
 
 If your own project uses an AES-encrypted PAK and you already know the 256-bit key, pass it to read operations:
@@ -126,7 +172,7 @@ The wrapper passes the key to `repak`; it does not discover or crack keys. The o
 
 | File | Description |
 |---|---|
-| `ue4tool.py` | Main Python CLI; standard library only. |
+| `ue4tool.py` | Main Python CLI; standard library only. Lua 5.3 is an optional external compiler for `lua-validate` and `lua-compile`. |
 | `install-termux.sh` | Termux setup and installation script. |
 | `README.md` | Usage and troubleshooting guide. |
 

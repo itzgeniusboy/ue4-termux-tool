@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
-"""UE4 Termux Tool: safe OBB and Unreal Engine PAK helper for authorized projects.
+"""UE4 Termux Tool: safe OBB, Unreal Engine PAK, and standard Lua helper.
 
-This program intentionally delegates UE4 PAK parsing/writing to the official
-repak CLI instead of reimplementing the binary format.
+This program delegates UE4 PAK parsing/writing to the repak CLI and uses an
+owner-installed Lua 5.3 compiler for optional source validation/compilation.
 """
 from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
 import os
 from pathlib import Path, PurePosixPath
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
 
 APP_NAME = "ue4tool"
@@ -144,6 +146,12 @@ def pak_list(args: argparse.Namespace) -> None:
     run_repak(repak_binary(args.repak), args.aes_key, command)
 
 
+def pak_hash(args: argparse.Namespace) -> None:
+    pak = require_file(Path(args.pak), "PAK")
+    command = ["hash-list", str(pak), "--strip-prefix", args.strip_prefix]
+    run_repak(repak_binary(args.repak), args.aes_key, command)
+
+
 def pak_unpack(args: argparse.Namespace) -> None:
     pak = require_file(Path(args.pak), "PAK")
     output = Path(args.output).expanduser() if args.output else pak.with_suffix("")
@@ -239,8 +247,165 @@ def lua_inject(args: argparse.Namespace) -> None:
         print("Note: repak can read with the supplied key, but repak-created output is not encrypted by this tool.", file=sys.stderr)
 
 
+# ---------- Standard Lua 5.3 batch helpers ----------
+
+def find_luac(explicit: str | None = None) -> str:
+    candidates: list[str] = []
+    if explicit:
+        candidates.append(explicit)
+    if os.environ.get("LUAC_BIN"):
+        candidates.append(os.environ["LUAC_BIN"])
+    candidates += ["luac5.3", "luac", "/data/data/com.termux/files/usr/bin/luac5.3", "/usr/bin/luac5.3"]
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        resolved = candidate if os.path.sep in candidate else shutil.which(candidate)
+        if not resolved:
+            continue
+        try:
+            probe = subprocess.run([resolved, "-v"], capture_output=True, text=True, timeout=5)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        version = (probe.stdout + probe.stderr).strip()
+        if "5.3" in version:
+            return resolved
+    fail("Lua 5.3 compiler not found. Install it with `pkg install lua53`, or pass --luac /path/to/luac5.3")
+
+
+def lua_files(source: Path) -> list[tuple[Path, PurePosixPath]]:
+    if source.is_file():
+        if source.suffix.lower() != ".lua":
+            fail(f"Lua source must use .lua extension: {source}")
+        return [(source, PurePosixPath(source.name))]
+    source = require_dir(source, "Lua source directory")
+    result: list[tuple[Path, PurePosixPath]] = []
+    for path in sorted(source.rglob("*.lua")):
+        if path.is_file():
+            result.append((path, PurePosixPath(path.relative_to(source).as_posix())))
+    if not result:
+        fail(f"no .lua files found under {source}")
+    return result
+
+
+def bytecode_file(path: Path) -> bool:
+    try:
+        with path.open("rb") as handle:
+            return handle.read(4) == b"\x1bLua"
+    except OSError:
+        return False
+
+
+def format_bytes(size: int) -> str:
+    value = float(size)
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if value < 1024 or unit == "GiB":
+            return f"{value:.1f}{unit}" if unit != "B" else f"{int(value)}B"
+        value /= 1024
+    return f"{size}B"
+
+
+def save_lua_report(report_path: Path | None, mode: str, entries: list[dict[str, object]], started: float) -> None:
+    if report_path is None:
+        return
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    success = sum(1 for item in entries if item["status"] == "ok")
+    report = {
+        "tool": APP_NAME,
+        "mode": mode,
+        "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "elapsed_seconds": round(time.time() - started, 3),
+        "summary": {"total": len(entries), "success": success, "failed": len(entries) - success},
+        "files": entries,
+    }
+    report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"Report written to {report_path}")
+
+
+def run_lua_batch(args: argparse.Namespace, compile_mode: bool) -> None:
+    source = Path(args.source).expanduser()
+    files = lua_files(source)
+    compiler = find_luac(args.luac)
+    output_root = Path(args.out).expanduser() if compile_mode else None
+    if compile_mode:
+        output_root.mkdir(parents=True, exist_ok=True)
+    report_path = Path(args.report).expanduser() if args.report else None
+    started = time.time()
+    entries: list[dict[str, object]] = []
+
+    for path, relative in files:
+        started_file = time.time()
+        item: dict[str, object] = {
+            "file": relative.as_posix(),
+            "input_bytes": path.stat().st_size,
+            "status": "failed",
+        }
+        if bytecode_file(path):
+            item.update({"status": "skipped", "reason": "already Lua bytecode", "elapsed_seconds": round(time.time() - started_file, 3)})
+            entries.append(item)
+            print(f"SKIP  {relative} (already bytecode)")
+            continue
+
+        try:
+            if compile_mode:
+                assert output_root is not None
+                destination = safe_destination(output_root, relative)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if destination.exists() and not args.force:
+                    raise FileExistsError(f"output exists: {destination}; use --force")
+                command = [compiler, "-o", str(destination), str(path)]
+            else:
+                destination = None
+                command = [compiler, "-p", str(path)]
+            result = subprocess.run(command, capture_output=True, text=True, timeout=60)
+            if result.returncode != 0:
+                message = (result.stderr or result.stdout).strip().splitlines()
+                raise RuntimeError(" ".join(message)[-500:] or f"compiler exit {result.returncode}")
+            item["status"] = "ok"
+            if destination is not None:
+                item["output"] = destination.as_posix()
+                item["output_bytes"] = destination.stat().st_size
+            print(f"OK    {relative}" + (f" -> {destination}" if destination else ""))
+        except (OSError, subprocess.SubprocessError, RuntimeError) as exc:
+            item["error"] = str(exc)
+            print(f"FAIL  {relative}: {exc}", file=sys.stderr)
+        item["elapsed_seconds"] = round(time.time() - started_file, 3)
+        entries.append(item)
+
+    save_lua_report(report_path, "compile" if compile_mode else "validate", entries, started)
+    success = sum(1 for item in entries if item["status"] == "ok")
+    failed = sum(1 for item in entries if item["status"] == "failed")
+    skipped = sum(1 for item in entries if item["status"] == "skipped")
+    print(f"Summary: {success} OK, {failed} failed, {skipped} skipped, {len(entries)} total")
+    if failed:
+        raise SystemExit(1)
+
+
+def lua_validate(args: argparse.Namespace) -> None:
+    run_lua_batch(args, compile_mode=False)
+
+
+def lua_compile(args: argparse.Namespace) -> None:
+    run_lua_batch(args, compile_mode=True)
+
+
+def lua_zip(args: argparse.Namespace) -> None:
+    source = require_dir(Path(args.source).expanduser(), "Lua source directory")
+    output = Path(args.output).expanduser()
+    files = [p for p in sorted(source.rglob("*")) if p.is_file()]
+    if not files:
+        fail(f"source directory is empty: {source}")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+        for path in files:
+            relative = safe_member_path(path.relative_to(source).as_posix())
+            archive.write(path, relative.as_posix())
+    print(f"Packaged {len(files)} files into {output} ({format_bytes(output.stat().st_size)})")
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog=APP_NAME, description="Authorized UE4 OBB/PAK helper for Termux")
+    parser = argparse.ArgumentParser(prog=APP_NAME, description="Authorized UE4 OBB/PAK/Lua helper for Termux")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("obb-list", help="list a ZIP-compatible OBB")
@@ -263,6 +428,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("pak-list", help="list files in a PAK")
     p.add_argument("pak"); p.add_argument("--strip-prefix", default="../../../"); add_pak_common(p); p.set_defaults(func=pak_list)
 
+    p = sub.add_parser("pak-hash", help="print SHA-256 hashes for files in a PAK")
+    p.add_argument("pak"); p.add_argument("--strip-prefix", default="../../../"); add_pak_common(p); p.set_defaults(func=pak_hash)
+
     p = sub.add_parser("pak-unpack", help="extract a PAK")
     p.add_argument("pak"); p.add_argument("--out", "-o"); p.add_argument("--strip-prefix", default="../../../"); p.add_argument("--quiet", action="store_true"); add_pak_common(p); p.set_defaults(func=pak_unpack)
 
@@ -271,6 +439,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("lua-inject", help="unpack a PAK, copy Lua files, and repack it")
     p.add_argument("pak"); p.add_argument("lua_source", help="Lua file or directory containing .lua files"); p.add_argument("--output", "-o"); p.add_argument("--in-place", action="store_true", help="allow --output to equal the input after creating a backup"); p.add_argument("--target-prefix", default="Script", help="directory inside the PAK for injected Lua files"); p.add_argument("--target-file", help="target filename for a single Lua source file"); p.add_argument("--strip-prefix", default="../../../"); p.add_argument("--mount-point", default="../../../"); p.add_argument("--version", default="v8b"); p.add_argument("--compression", choices=["zlib", "gzip", "zstd", "lz4", "oodle"]); add_pak_common(p); p.set_defaults(func=lua_inject)
+
+    def add_lua_common(p: argparse.ArgumentParser) -> None:
+        p.add_argument("source", help="Lua file or directory")
+        p.add_argument("--luac", help="path to a Lua 5.3 compiler; default: LUAC_BIN, PATH")
+        p.add_argument("--report", help="write a JSON operation report")
+
+    p = sub.add_parser("lua-validate", help="syntax-check Lua 5.3 source files")
+    add_lua_common(p); p.set_defaults(func=lua_validate)
+
+    p = sub.add_parser("lua-compile", help="compile Lua 5.3 source files to bytecode")
+    add_lua_common(p); p.add_argument("--out", "-o", required=True, help="output directory"); p.add_argument("--force", action="store_true"); p.set_defaults(func=lua_compile)
+
+    p = sub.add_parser("lua-zip", help="ZIP a Lua output directory")
+    p.add_argument("source"); p.add_argument("output"); p.set_defaults(func=lua_zip)
 
     return parser
 
