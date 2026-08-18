@@ -259,6 +259,24 @@ ls -lh /sdcard/Download
 
 If PAK unpacking fails, confirm that the PAK is not corrupted, that the exact project AES key is correct when encryption is enabled, and that the PAK version is supported by the installed `repak`. If a generated PAK is not readable by your own UE4 build, retry using the version, mount point, and compression settings used by that project.
 
+## Automatic bug recovery
+
+When `tool unpack`, `tool repack`, or `tool inject` encounters a handled error, it saves a small diagnostic report locally, checks for a newer public version, and retries the same operation once. This can automatically recover bugs that have already been fixed and published. A new bug still needs the report to be shared manually so it can be diagnosed and fixed in a future update.
+
+Reports are stored in:
+
+```text
+~/.local/state/tool/error-<timestamp>.json
+```
+
+The report contains only the operation name, sanitized error text, exit code, Python version, platform, and Termux status. It does **not** contain PAK contents, Lua source, AES keys, or full file paths. To disable the automatic retry for one command:
+
+```bash
+TOOL_NO_AUTO_RETRY=1 tool unpack game.pak
+```
+
+After a failed command, send the newest JSON report here. Do not paste AES keys or private Lua/PAK files.
+
 ## Repository
 
 [https://github.com/itzgeniusboy/ue4-termux-tool](https://github.com/itzgeniusboy/ue4-termux-tool)

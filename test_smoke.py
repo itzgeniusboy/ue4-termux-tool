@@ -1,7 +1,12 @@
 from pathlib import Path
+import json
+import os
 import subprocess
 import sys
 import tempfile
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from ue4tool import sanitize_diagnostic_text
 
 ROOT = Path(__file__).resolve().parent
 TOOL = ROOT / "ue4tool.py"
@@ -11,6 +16,9 @@ assert "def backup_file" not in source_text
 assert "start_background_update" in source_text
 assert "tool-update.lock" in source_text
 assert 'APP_NAME = "tool"' in source_text
+sanitized = sanitize_diagnostic_text("--aes-key SECRET /sdcard/private/game.pak")
+assert "SECRET" not in sanitized
+assert "/sdcard/private/game.pak" not in sanitized
 for script in ("setup.sh", "update-termux.sh", "install-termux.sh"):
     subprocess.run(["bash", "-n", str(ROOT / script)], check=True)
 
@@ -66,6 +74,24 @@ else:
     text = injected.read_text(encoding="utf-8")
     assert "Script/MyMod/init.lua" in text
     assert "Script/MyMod/player.lua" in text
+
+with tempfile.TemporaryDirectory(prefix="tool-report-test-") as report_tmp:
+    report_env = os.environ.copy()
+    report_env["XDG_STATE_HOME"] = report_tmp
+    report_env["TOOL_NO_AUTO_RETRY"] = "1"
+    failed = subprocess.run(
+        [sys.executable, str(TOOL), "unpack", "/sdcard/private/missing.pak"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=report_env,
+    )
+    assert failed.returncode != 0
+    reports = list((Path(report_tmp) / "tool").glob("error-*.json"))
+    assert reports
+    report_data = json.loads(reports[0].read_text(encoding="utf-8"))
+    assert report_data["command"] == "unpack"
+    assert "PAK contents" in report_data["privacy"]
 
 help_result = subprocess.run([sys.executable, str(TOOL), "--help"], check=True, capture_output=True, text=True)
 assert "unpack" in help_result.stdout

@@ -7,8 +7,10 @@ The tool supports PAK unpacking, PAK repacking, and Lua injection. Running
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path, PurePosixPath
+import re
 import shutil
 import shlex
 import subprocess
@@ -20,9 +22,39 @@ APP_NAME = "tool"
 DOWNLOAD_DIR = Path("/sdcard/Download")
 
 
+class ToolError(RuntimeError):
+    def __init__(self, message: str, code: int = 2):
+        super().__init__(message)
+        self.code = code
+
+
 def fail(message: str, code: int = 2) -> None:
-    print(f"{APP_NAME}: error: {message}", file=sys.stderr)
-    raise SystemExit(code)
+    raise ToolError(message, code)
+
+
+def sanitize_diagnostic_text(text: str) -> str:
+    text = re.sub(r"--aes-key(?:=|\s+)[^\s]+", "--aes-key <redacted>", text, flags=re.IGNORECASE)
+    text = re.sub(r"(?i)(aes[_ -]?key\s*[:=]\s*)[^\s,;]+", r"\1<redacted>", text)
+    text = re.sub(r"(?:/|~/?)[^\s,;]+", "<path>", text)
+    return text
+
+
+def write_diagnostic(command: str, error: str, code: int) -> Path:
+    report_dir = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / APP_NAME
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report = report_dir / f"error-{int(time.time())}.json"
+    payload = {
+        "tool": APP_NAME,
+        "command": command,
+        "error": sanitize_diagnostic_text(error),
+        "exit_code": code,
+        "python": sys.version.split()[0],
+        "platform": sys.platform,
+        "termux": bool(os.environ.get("PREFIX")),
+        "privacy": "No PAK contents, Lua source, AES keys, or full file paths are stored.",
+    }
+    report.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return report
 
 
 def require_file(path: Path, label: str) -> Path:
@@ -71,7 +103,11 @@ def repak_command(binary: str, aes_key: str | None, args: list[str]) -> list[str
 
 def run_repak(binary: str, aes_key: str | None, args: list[str]) -> None:
     command = repak_command(binary, aes_key, args)
-    print("$ " + " ".join(subprocess.list2cmdline([part]) for part in command))
+    display_command = [binary]
+    if aes_key:
+        display_command += ["--aes-key", "<redacted>"]
+    display_command += args
+    print("$ " + " ".join(subprocess.list2cmdline([part]) for part in display_command))
     try:
         completed = subprocess.run(command, check=False)
     except OSError as exc:
@@ -300,16 +336,42 @@ def make_interactive_args(command: str) -> argparse.Namespace:
     )
 
 
-def update_project() -> None:
+def update_project() -> bool:
     project = Path(__file__).resolve().parent
     script = project / "update-termux.sh"
     if not script.is_file():
         print(f"Update script not found at {script}. Re-clone the public repository first.")
-        return
+        return False
     print("Updating tool...")
     result = subprocess.run(["bash", str(script)], cwd=project, check=False)
     if result.returncode != 0:
         print("Update failed. You can retry with: bash ~/ue4-termux-tool/update-termux.sh")
+        return False
+    return True
+
+
+def execute_with_recovery(command: str, handler, args: argparse.Namespace) -> bool:
+    try:
+        handler(args)
+        return True
+    except ToolError as exc:
+        report = write_diagnostic(command, str(exc), exc.code)
+        print(f"{APP_NAME}: error: {sanitize_diagnostic_text(str(exc))}", file=sys.stderr)
+        print(f"Diagnostic saved locally: {report}", file=sys.stderr)
+        if os.environ.get("TOOL_NO_AUTO_RETRY") == "1":
+            return False
+        print("Trying one tool update and retry...")
+        if not update_project():
+            return False
+        try:
+            handler(args)
+            print("Retry successful after update.")
+            return True
+        except ToolError as retry_exc:
+            retry_report = write_diagnostic(command, str(retry_exc), retry_exc.code)
+            print(f"Retry failed: {sanitize_diagnostic_text(str(retry_exc))}", file=sys.stderr)
+            print(f"New diagnostic saved locally: {retry_report}", file=sys.stderr)
+            return False
 
 
 def start_background_update() -> None:
@@ -382,7 +444,7 @@ def interactive_menu() -> None:
         return
     try:
         args = make_interactive_args(command)
-        {"unpack": pak_unpack, "repack": pak_repack, "inject": lua_inject}[command](args)
+        execute_with_recovery(command, {"unpack": pak_unpack, "repack": pak_repack, "inject": lua_inject}[command], args)
     except (EOFError, KeyboardInterrupt):
         print("\nCancelled.")
 
@@ -398,11 +460,11 @@ def main() -> int:
             parser.print_help()
         return 0
     try:
-        args.func(args)
+        ok = execute_with_recovery(args.command, args.func, args)
     except KeyboardInterrupt:
         print("\nCancelled.", file=sys.stderr)
         return 130
-    return 0
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":
