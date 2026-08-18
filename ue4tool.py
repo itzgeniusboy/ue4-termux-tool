@@ -18,6 +18,7 @@ import sys
 import tempfile
 import time
 from urllib import request as urlrequest
+from urllib import error as urlerror
 from urllib.parse import urlparse
 
 APP_NAME = "tool"
@@ -81,8 +82,11 @@ def reporting_consent() -> bool:
     except (EOFError, KeyboardInterrupt):
         answer = ""
     consent = "yes" if answer in {"y", "yes"} else "no"
-    consent_path.parent.mkdir(parents=True, exist_ok=True)
-    consent_path.write_text(consent + "\n", encoding="utf-8")
+    try:
+        consent_path.parent.mkdir(parents=True, exist_ok=True)
+        consent_path.write_text(consent + "\n", encoding="utf-8")
+    except OSError:
+        return False
     return consent == "yes"
 
 
@@ -137,7 +141,7 @@ def _send_report(report_path: Path) -> bool:
                 return False
         print("Anonymous diagnostic report sent.", file=sys.stderr)
         return True
-    except (KeyError, OSError, ValueError, urlrequest.URLError):
+    except (KeyError, OSError, ValueError, urlerror.URLError):
         print("Anonymous diagnostic report could not be sent.", file=sys.stderr)
         return False
 
