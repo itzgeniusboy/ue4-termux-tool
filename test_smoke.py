@@ -38,14 +38,13 @@ else:
     input_pak.write_text("placeholder", encoding="utf-8")
     unpacked = base / "unpacked-from-pak"
     subprocess.run([
-        sys.executable, str(TOOL), "pak-unpack", str(input_pak),
-        "--out", str(unpacked), "--repak", str(fake_repak)
+        sys.executable, str(TOOL), "unpack", str(input_pak), str(unpacked), "--repak", str(fake_repak)
     ], check=True)
     assert (unpacked / "Existing/file.txt").read_text(encoding="utf-8") == "existing"
 
     repacked = base / "repacked.pak"
     subprocess.run([
-        sys.executable, str(TOOL), "pak-repack", str(source), str(repacked),
+        sys.executable, str(TOOL), "repack", str(source), str(repacked),
         "--version", "v7", "--repak", str(fake_repak)
     ], check=True)
     assert repacked.exists()
@@ -53,8 +52,7 @@ else:
 
     injected = base / "injected.pak"
     subprocess.run([
-        sys.executable, str(TOOL), "lua-inject", str(input_pak), str(lua),
-        "--output", str(injected), "--repak", str(fake_repak),
+        sys.executable, str(TOOL), "inject", str(input_pak), str(lua), str(injected), "--repak", str(fake_repak),
         "--target-prefix", "Script", "--version", "v7"
     ], check=True)
     text = injected.read_text(encoding="utf-8")

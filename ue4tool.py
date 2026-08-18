@@ -79,7 +79,8 @@ def run_repak(binary: str, aes_key: str | None, args: list[str]) -> None:
 
 def pak_unpack(args: argparse.Namespace) -> None:
     pak = require_file(Path(args.pak), "PAK")
-    output = Path(args.out).expanduser() if args.out else pak.with_suffix("")
+    output_value = args.output_flag or args.output
+    output = Path(output_value).expanduser() if output_value else pak.with_suffix("")
     command = ["unpack", str(pak), "--output", str(output), "--strip-prefix", args.strip_prefix, "--force"]
     if args.quiet:
         command.append("--quiet")
@@ -151,7 +152,8 @@ def lua_inject(args: argparse.Namespace) -> None:
     source = Path(args.lua_source).expanduser()
     if not source.is_file() and not source.is_dir():
         fail(f"Lua source not found: {source}")
-    output = Path(args.output).expanduser() if args.output else pak.with_name(pak.stem + ".lua.pak")
+    output_value = args.output_flag or args.output
+    output = Path(output_value).expanduser() if output_value else pak.with_name(pak.stem + ".lua.pak")
     if output.resolve() == pak.resolve():
         if not args.in_place:
             fail("refusing to overwrite the original PAK; choose --output or add --in-place")
@@ -190,25 +192,27 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=APP_NAME, description="Focused UE4 PAK unpack, repack, and Lua inject tool for Termux")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("pak-unpack", help="extract a UE4 PAK through repak")
+    p = sub.add_parser("unpack", help="extract a UE4 PAK; usage: ue4tool unpack game.pak [folder]")
     p.add_argument("pak")
-    p.add_argument("--out", "-o", help="output directory; default: PAK filename without extension")
+    p.add_argument("output", nargs="?", help="output directory; default: PAK filename without extension")
+    p.add_argument("--out", "-o", dest="output_flag", help="same as the optional output path")
     p.add_argument("--strip-prefix", default="../../../")
     p.add_argument("--quiet", action="store_true")
     add_repak_common(p, aes=True)
     p.set_defaults(func=pak_unpack)
 
-    p = sub.add_parser("pak-repack", help="create/repack a UE4 PAK from a directory")
+    p = sub.add_parser("repack", help="create a PAK; usage: ue4tool repack folder new.pak")
     p.add_argument("source", help="unpacked PAK directory")
     p.add_argument("output", help="new PAK path")
     add_pack_options(p)
     add_repak_common(p)
     p.set_defaults(func=pak_repack)
 
-    p = sub.add_parser("lua-inject", help="unpack a PAK, inject Lua files, and create a new PAK")
+    p = sub.add_parser("inject", help="inject Lua; usage: ue4tool inject game.pak lua-folder [new.pak]")
     p.add_argument("pak")
     p.add_argument("lua_source", help="one Lua file or a directory containing Lua files")
-    p.add_argument("--output", "-o", help="new PAK path; default: <input>.lua.pak")
+    p.add_argument("output", nargs="?", help="new PAK path; default: <input>.lua.pak")
+    p.add_argument("--output", "-o", dest="output_flag", help="same as the optional output path")
     p.add_argument("--in-place", action="store_true", help="allow replacing the input after creating a backup")
     p.add_argument("--target-prefix", default="Script", help="directory inside the PAK for injected Lua files")
     p.add_argument("--target-file", help="target filename for one Lua source file")
