@@ -18,3 +18,20 @@ controlled report file synchronization test
 ```
 
 ---
+
+<!-- ue4-bug-relay:ff71b26a5023f36b7e9c28491d0aaa5b5509f18e4916ba254224cda8fe9460d4 -->
+## repack · ff71b26a5023
+
+- **Received (UTC):** 2026-08-18T20:38:35.667Z
+- **Tool version:** `verification`
+- **Platform:** Termux Android
+- **Exit code:** 2
+- **Fingerprint:** `ff71b26a5023f36b7e9c28491d0aaa5b5509f18e4916ba254224cda8fe9460d4`
+
+### Sanitized error
+
+```text
+controlled final report file verification
+```
+
+---
