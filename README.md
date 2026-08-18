@@ -277,7 +277,7 @@ TOOL_NO_AUTO_RETRY=1 tool unpack game.pak
 
 ### Optional anonymous relay
 
-When the maintainer-configured relay is available, the first handled failure asks:
+The public release is connected to the HTTPS relay at `https://ue4bugrelay-vlych7sk.manus.space/api/report`. On the first handled failure, the tool asks:
 
 ```text
 Send anonymous bug report? [y/N]
@@ -291,7 +291,7 @@ To permanently suppress relay reporting for one command, even when consent was g
 TOOL_NO_REPORT=1 tool unpack game.pak
 ```
 
-Advanced maintainers can configure the HTTPS relay address with `UE4TOOL_REPORT_ENDPOINT`. Do not set it to an untrusted URL.
+Advanced maintainers can override the HTTPS relay address with `UE4TOOL_REPORT_ENDPOINT`. Do not set it to an untrusted URL.
 
 ## Repository
 

@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 APP_NAME = "tool"
 DOWNLOAD_DIR = Path("/sdcard/Download")
 REPORT_ENDPOINT_ENV = "UE4TOOL_REPORT_ENDPOINT"
+REPORT_ENDPOINT_DEFAULT = "https://ue4bugrelay-vlych7sk.manus.space/api/report"
 
 
 class ToolError(RuntimeError):
@@ -113,7 +114,7 @@ def _send_report(report_path: Path) -> bool:
     if os.environ.get("TOOL_NO_REPORT") == "1":
         return False
 
-    endpoint = os.environ.get(REPORT_ENDPOINT_ENV, "").strip()
+    endpoint = os.environ.get(REPORT_ENDPOINT_ENV, REPORT_ENDPOINT_DEFAULT).strip()
     parsed = urlparse(endpoint)
     if parsed.scheme != "https" or not parsed.netloc:
         return False

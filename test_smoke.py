@@ -7,7 +7,7 @@ import tempfile
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ue4tool import _send_report, sanitize_diagnostic_text
+from ue4tool import REPORT_ENDPOINT_DEFAULT, _send_report, sanitize_diagnostic_text
 
 ROOT = Path(__file__).resolve().parent
 TOOL = ROOT / "ue4tool.py"
@@ -80,6 +80,7 @@ with tempfile.TemporaryDirectory(prefix="tool-report-test-") as report_tmp:
     report_env = os.environ.copy()
     report_env["XDG_STATE_HOME"] = report_tmp
     report_env["TOOL_NO_AUTO_RETRY"] = "1"
+    report_env["TOOL_NO_REPORT"] = "1"
     failed = subprocess.run(
         [sys.executable, str(TOOL), "unpack", "/sdcard/private/missing.pak"],
         check=False,
@@ -116,6 +117,17 @@ with tempfile.TemporaryDirectory(prefix="tool-report-test-") as report_tmp:
             assert set(outgoing) == {"operation", "error_message", "tool_version", "exit_code", "platform"}
             assert "/sdcard/private/missing.pak" not in outgoing["error_message"]
         assert (Path(consent_tmp) / "ue4tool" / "report_consent").read_text(encoding="utf-8").strip() == "yes"
+
+    with tempfile.TemporaryDirectory(prefix="tool-default-endpoint-test-") as default_tmp:
+        default_response = MagicMock()
+        default_response.__enter__.return_value.status = 202
+        default_env = {
+            "TOOL_NO_REPORT": "0",
+            "XDG_CONFIG_HOME": default_tmp,
+        }
+        with patch.dict(os.environ, default_env, clear=True), patch("builtins.input", return_value="y"), patch("ue4tool.urlrequest.urlopen", return_value=default_response) as default_sent:
+            assert _send_report(reports[0]) is True
+            assert default_sent.call_args.args[0].full_url == REPORT_ENDPOINT_DEFAULT
 
 help_result = subprocess.run([sys.executable, str(TOOL), "--help"], check=True, capture_output=True, text=True)
 assert "unpack" in help_result.stdout
