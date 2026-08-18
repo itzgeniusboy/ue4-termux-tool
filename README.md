@@ -24,14 +24,14 @@ When Android asks for storage permission, select **Allow**. This allows access t
 
 ## 2. Clone the repository
 
-Clone the private repository with GitHub access:
+Clone the public repository; GitHub login is not required:
 
 ```bash
 git clone https://github.com/itzgeniusboy/ue4-termux-tool.git
 cd ue4-termux-tool
 ```
 
-If the repository is private and Git asks for authentication, sign in to GitHub or clone through your configured Git credentials. The repository URL is:
+Because this repository is public, the following clone command works without GitHub login. The repository URL is:
 
 ```text
 https://github.com/itzgeniusboy/ue4-termux-tool.git
