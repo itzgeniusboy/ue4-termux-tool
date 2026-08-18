@@ -20,7 +20,7 @@ Install Termux from a trusted source such as [F-Droid](https://f-droid.org/packa
 curl -fsSL https://raw.githubusercontent.com/itzgeniusboy/ue4-termux-tool/main/setup.sh | bash
 ```
 
-The public repository does not require GitHub login. The setup script updates Termux packages, installs Git/Python/unzip/Rust, requests storage permission, clones the repository, builds `repak`, and installs `ue4tool`.
+The public repository does not require GitHub login. The setup script updates Termux packages, installs Git/Python/unzip/Rust, requests storage permission, clones the repository, builds `repak`, and installs `tool`.
 
 If `curl` is not installed, run:
 
@@ -66,10 +66,10 @@ git clone https://github.com/itzgeniusboy/ue4-termux-tool.git
 After setup, run this single command:
 
 ```bash
-ue4tool
+tool
 ```
 
-The command opens the menu immediately and starts a non-blocking update check in the background. It checks the public GitHub repository, uses a lock so duplicate checks do not run together, and only rebuilds the tool when a new commit is found. The update log is stored at `~/.cache/ue4tool-update.log`. To skip automatic updating for one launch, use `UE4TOOL_NO_AUTO_UPDATE=1 ue4tool`.
+The command opens the menu immediately and starts a non-blocking update check in the background. It checks the public GitHub repository, uses a lock so duplicate checks do not run together, and only rebuilds the tool when a new commit is found. The update log is stored at `~/.cache/tool-update.log`. To skip automatic updating for one launch, use `TOOL_NO_AUTO_UPDATE=1 tool`.
 
 The menu provides:
 
@@ -94,9 +94,9 @@ termux-setup-storage
 The shortest command forms are:
 
 ```bash
-ue4tool unpack input.pak unpacked-folder
-ue4tool repack unpacked-folder output.pak
-ue4tool inject input.pak lua-folder output.pak
+tool unpack input.pak unpacked-folder
+tool repack unpacked-folder output.pak
+tool inject input.pak lua-folder output.pak
 ```
 
 Files in the Android Download folder use paths like `/sdcard/Download/game.pak`.
@@ -104,19 +104,19 @@ Files in the Android Download folder use paths like `/sdcard/Download/game.pak`.
 ### 1. PAK unpack
 
 ```bash
-ue4tool unpack /sdcard/Download/game.pak /sdcard/Download/game-unpacked
+tool unpack /sdcard/Download/game.pak /sdcard/Download/game-unpacked
 ```
 
 If the output folder is omitted, the tool uses the PAK filename without its extension:
 
 ```bash
-ue4tool unpack /sdcard/Download/game.pak
+tool unpack /sdcard/Download/game.pak
 ```
 
 For an encrypted PAK from your own project, pass its known AES key:
 
 ```bash
-ue4tool unpack /sdcard/Download/game.pak /sdcard/Download/game-unpacked \
+tool unpack /sdcard/Download/game.pak /sdcard/Download/game-unpacked \
   --aes-key YOUR_PROJECT_AES_KEY
 ```
 
@@ -125,20 +125,20 @@ ue4tool unpack /sdcard/Download/game.pak /sdcard/Download/game-unpacked \
 After editing the unpacked directory:
 
 ```bash
-ue4tool repack /sdcard/Download/game-unpacked /sdcard/Download/game-repacked.pak
+tool repack /sdcard/Download/game-unpacked /sdcard/Download/game-repacked.pak
 ```
 
 The default PAK version is `v8b`. Select the exact version used by your UE4 project when needed:
 
 ```bash
-ue4tool repack /sdcard/Download/game-unpacked /sdcard/Download/game-repacked.pak \
+tool repack /sdcard/Download/game-unpacked /sdcard/Download/game-repacked.pak \
   --version v8b
 ```
 
 Optional compression:
 
 ```bash
-ue4tool repack /sdcard/Download/game-unpacked /sdcard/Download/game-repacked.pak \
+tool repack /sdcard/Download/game-unpacked /sdcard/Download/game-repacked.pak \
   --version v8b --compression zlib
 ```
 
@@ -147,7 +147,7 @@ ue4tool repack /sdcard/Download/game-unpacked /sdcard/Download/game-repacked.pak
 Inject a Lua file or a folder containing `.lua` files:
 
 ```bash
-ue4tool inject /sdcard/Download/game.pak \
+tool inject /sdcard/Download/game.pak \
   /sdcard/Download/lua \
   /sdcard/Download/game-with-lua.pak
 ```
@@ -155,21 +155,21 @@ ue4tool inject /sdcard/Download/game.pak \
 Lua files go into `Script/` by default. To select another PAK folder:
 
 ```bash
-ue4tool inject game.pak lua-folder injected.pak \
+tool inject game.pak lua-folder injected.pak \
   --target-prefix MyScripts
 ```
 
 For a single Lua file with a specific target filename:
 
 ```bash
-ue4tool inject game.pak init.lua injected.pak \
+tool inject game.pak init.lua injected.pak \
   --target-prefix Script --target-file init.lua
 ```
 
 For an encrypted source PAK from your own project:
 
 ```bash
-ue4tool inject encrypted-project.pak lua-folder project-with-lua.pak \
+tool inject encrypted-project.pak lua-folder project-with-lua.pak \
   --aes-key YOUR_PROJECT_AES_KEY
 ```
 
@@ -180,13 +180,13 @@ The tool reads the source PAK, copies Lua files into temporary staging, and crea
 As requested, this tool does **not** create backup files. By default it refuses to overwrite the input PAK, which is the safer option:
 
 ```bash
-ue4tool inject game.pak lua-folder game-with-lua.pak
+tool inject game.pak lua-folder game-with-lua.pak
 ```
 
 If you deliberately want to replace the original PAK, use `--in-place`. This replaces the original directly and creates **no backup**:
 
 ```bash
-ue4tool inject game.pak lua-folder game.pak --in-place
+tool inject game.pak lua-folder game.pak --in-place
 ```
 
 Always keep your own copy if the original file is important.
@@ -206,15 +206,15 @@ Always keep your own copy if the original file is important.
 View all options:
 
 ```bash
-ue4tool --help
-ue4tool unpack --help
-ue4tool repack --help
-ue4tool inject --help
+tool --help
+tool unpack --help
+tool repack --help
+tool inject --help
 ```
 
 ## Update the tool
 
-Opening `ue4tool` automatically checks for updates in the background. You can also select option `4` for a foreground update, or run this command manually:
+Opening `tool` automatically checks for updates in the background. You can also select option `4` for a foreground update, or run this command manually:
 
 ```bash
 bash ~/ue4-termux-tool/update-termux.sh
@@ -224,11 +224,11 @@ The update script pulls the public repository and rebuilds the installed `repak`
 
 ## Troubleshooting
 
-If `ue4tool` is not found, restart Termux or run:
+If `tool` is not found, restart Termux or run:
 
 ```bash
 export PATH="$PREFIX/bin:$PATH"
-ue4tool --help
+tool --help
 ```
 
 If `repak` is missing:

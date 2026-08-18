@@ -9,7 +9,8 @@ TOOL = ROOT / "ue4tool.py"
 source_text = TOOL.read_text(encoding="utf-8")
 assert "def backup_file" not in source_text
 assert "start_background_update" in source_text
-assert "ue4tool-update.lock" in source_text
+assert "tool-update.lock" in source_text
+assert 'APP_NAME = "tool"' in source_text
 for script in ("setup.sh", "update-termux.sh", "install-termux.sh"):
     subprocess.run(["bash", "-n", str(ROOT / script)], check=True)
 

@@ -2,7 +2,7 @@
 """Friendly UE4 Termux helper for authorized projects.
 
 The tool supports PAK unpacking, PAK repacking, and Lua injection. Running
-`ue4tool` without a subcommand opens a guided menu.
+`tool` without a subcommand opens a guided menu.
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ import sys
 import tempfile
 import time
 
-APP_NAME = "ue4tool"
+APP_NAME = "tool"
 DOWNLOAD_DIR = Path("/sdcard/Download")
 
 
@@ -157,7 +157,7 @@ def lua_inject(args: argparse.Namespace) -> None:
         print("Warning: in-place mode will replace the original PAK without creating a backup.", file=sys.stderr)
 
     binary = repak_binary(args.repak)
-    with tempfile.TemporaryDirectory(prefix="ue4tool-") as temp_name:
+    with tempfile.TemporaryDirectory(prefix="tool-") as temp_name:
         staging = Path(temp_name) / "pak-files"
         print("[1/3] Unpacking source PAK...")
         unpack_cmd = ["unpack", str(pak), "--output", str(staging), "--strip-prefix", args.strip_prefix, "--force", "--quiet"]
@@ -192,7 +192,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=APP_NAME, description="Friendly UE4 PAK unpack, repack, and Lua inject tool for Termux")
     sub = parser.add_subparsers(dest="command")
 
-    p = sub.add_parser("unpack", help="extract a UE4 PAK; usage: ue4tool unpack game.pak [folder]")
+    p = sub.add_parser("unpack", help="extract a UE4 PAK; usage: tool unpack game.pak [folder]")
     p.add_argument("pak")
     p.add_argument("output", nargs="?", help="output directory; default: PAK filename without extension")
     p.add_argument("--out", "-o", dest="output_flag", help="same as the optional output path")
@@ -201,14 +201,14 @@ def build_parser() -> argparse.ArgumentParser:
     add_repak_common(p, aes=True)
     p.set_defaults(func=pak_unpack)
 
-    p = sub.add_parser("repack", help="create a PAK; usage: ue4tool repack folder new.pak")
+    p = sub.add_parser("repack", help="create a PAK; usage: tool repack folder new.pak")
     p.add_argument("source", help="unpacked PAK directory")
     p.add_argument("output", help="new PAK path")
     add_pack_options(p)
     add_repak_common(p)
     p.set_defaults(func=pak_repack)
 
-    p = sub.add_parser("inject", help="inject Lua; usage: ue4tool inject game.pak lua-folder [new.pak]")
+    p = sub.add_parser("inject", help="inject Lua; usage: tool inject game.pak lua-folder [new.pak]")
     p.add_argument("pak")
     p.add_argument("lua_source", help="one Lua file or a directory containing Lua files")
     p.add_argument("output", nargs="?", help="new PAK path; default: <input>.lua.pak")
@@ -314,7 +314,7 @@ def update_project() -> None:
 
 def start_background_update() -> None:
     """Start one detached update check without delaying the interactive menu."""
-    if os.environ.get("UE4TOOL_NO_AUTO_UPDATE") == "1":
+    if os.environ.get("TOOL_NO_AUTO_UPDATE") == "1":
         return
     project = Path(__file__).resolve().parent
     update_script = project / "update-termux.sh"
@@ -322,8 +322,8 @@ def start_background_update() -> None:
         return
     cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
     cache.mkdir(parents=True, exist_ok=True)
-    lock = cache / "ue4tool-update.lock"
-    log = cache / "ue4tool-update.log"
+    lock = cache / "tool-update.lock"
+    log = cache / "tool-update.log"
     try:
         fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         os.close(fd)

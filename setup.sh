@@ -23,5 +23,5 @@ chmod +x install-termux.sh ue4tool.py update-termux.sh
 bash install-termux.sh
 
 printf '%s\n' "[4/4] Installation complete."
-printf '%s\n' "Run: ue4tool"
-printf '%s\n' "Or check commands with: ue4tool --help"
+printf '%s\n' "Run: tool"
+printf '%s\n' "Or check commands with: tool --help"
