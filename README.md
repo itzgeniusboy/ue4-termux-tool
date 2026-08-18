@@ -285,6 +285,8 @@ Send anonymous bug report? [y/N]
 
 Answering `y` saves the choice in `~/.config/ue4tool/report_consent`. The tool then sends **only** the operation, sanitized error message, tool version, exit code, and platform. It never sends AES keys, PAK contents, Lua source, or full local paths. A report is sent over HTTPS and the server independently checks the same privacy rules before forwarding any diagnostic.
 
+New non-duplicate diagnostics are added to the bot-managed GitHub triage file: [`.ue4-bug-relay/unresolved-reports.md`](https://github.com/itzgeniusboy/ue4-termux-tool/blob/main/.ue4-bug-relay/unresolved-reports.md). This is a short sanitized queue for the project owner and maintainer; it is not a raw crash dump. When a fix is made and tested, the corresponding handled entry is removed from that file.
+
 To permanently suppress relay reporting for one command, even when consent was given earlier, run:
 
 ```bash
