@@ -134,7 +134,11 @@ def _send_report(report_path: Path) -> bool:
         request = urlrequest.Request(
             endpoint,
             data=encoded,
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "ue4-termux-tool/1.0",
+            },
             method="POST",
         )
         with urlrequest.urlopen(request, timeout=5) as response:

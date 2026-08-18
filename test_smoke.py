@@ -116,6 +116,7 @@ with tempfile.TemporaryDirectory(prefix="tool-report-test-") as report_tmp:
             outgoing = json.loads(sent.call_args.args[0].data.decode("utf-8"))
             assert set(outgoing) == {"operation", "error_message", "tool_version", "exit_code", "platform"}
             assert "/sdcard/private/missing.pak" not in outgoing["error_message"]
+            assert sent.call_args.args[0].get_header("User-agent") == "ue4-termux-tool/1.0"
         assert (Path(consent_tmp) / "ue4tool" / "report_consent").read_text(encoding="utf-8").strip() == "yes"
 
     with tempfile.TemporaryDirectory(prefix="tool-default-endpoint-test-") as default_tmp:
