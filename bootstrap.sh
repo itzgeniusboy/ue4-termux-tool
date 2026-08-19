@@ -32,7 +32,7 @@ fi
 
 printf '%s\n' "[4/4] Installing PakForge..."
 cd "$PROJECT"
-chmod +x install-termux.sh ue4tool.py pakforge.py update-termux.sh
+chmod +x install-termux.sh ue4tool.py pakforge.py pakforge_setup.py pakforge_first_run.py update-termux.sh
 SKIP_PACKAGES=1 bash install-termux.sh
 
 printf '%s\n' ""

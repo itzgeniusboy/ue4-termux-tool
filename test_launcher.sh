@@ -13,6 +13,9 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$FAKE_BIN/python3"
 chmod 0755 "$FAKE_BIN/python3"
 PATH="$FAKE_BIN:$CARGO_HOME_DIR/bin:$PATH" PREFIX="$PREFIX_DIR" CARGO_HOME="$CARGO_HOME_DIR" SKIP_PACKAGES=1 bash "$ROOT/install-termux.sh"
 REAL_PATH="/usr/local/bin:/usr/bin:/bin"
-PAKFORGE_NO_UPDATE=1 PATH="$PREFIX_DIR/bin:$REAL_PATH" bash "$PREFIX_DIR/bin/pakforge" --version | grep -Fx 'PakForge 1.3.7'
+PAKFORGE_NO_UPDATE=1 PATH="$PREFIX_DIR/bin:$REAL_PATH" bash "$PREFIX_DIR/bin/pakforge" --version | grep -Fx 'PakForge 1.3.8'
 command -v "$PREFIX_DIR/bin/tool" >/dev/null
+grep -Fq 'pakforge_setup.py' "$PREFIX_DIR/bin/pakforge"
+grep -Fq 'nohup python3' "$PREFIX_DIR/bin/pakforge"
+grep -Fq 'setup-status' "$PREFIX_DIR/bin/pakforge"
 printf '%s\n' 'launcher-tests-ok'

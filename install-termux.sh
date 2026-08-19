@@ -49,9 +49,24 @@ SCRIPT_DIR="$SCRIPT_DIR"
 STATE_DIR="\${XDG_STATE_HOME:-\$HOME/.local/state}/pakforge"
 mkdir -p "\$STATE_DIR"
 
+if [ "\${1:-}" = "setup-status" ]; then
+  exec python3 "\$SCRIPT_DIR/pakforge_setup.py" --status
+fi
+
+SETUP_LOG="\$STATE_DIR/setup.log"
+SETUP_STATUS="\$STATE_DIR/setup-status.json"
+if [ "\${PAKFORGE_NO_SETUP:-0}" != "1" ] && { [ ! -f "\$SETUP_STATUS" ] || ! grep -q '"state": "ready"' "\$SETUP_STATUS" 2>/dev/null || ! python3 -c 'import rich, pytz, gmalg, Crypto, zstandard' >/dev/null 2>&1 || ! command -v repak >/dev/null 2>&1; }; then
+  if [ ! -d "\$STATE_DIR/setup.lock" ]; then
+    printf '%s\n' "[PakForge] Setup is running in the background. Log: \$SETUP_LOG"
+    nohup python3 "\$SCRIPT_DIR/pakforge_setup.py" --background >>"\$SETUP_LOG" 2>&1 </dev/null &
+  else
+    printf '%s\n' "[PakForge] Background setup is already running. Log: \$SETUP_LOG"
+  fi
+fi
+
 if ! python3 -c 'import rich, pytz, gmalg, Crypto, zstandard' >/dev/null 2>&1; then
-  printf '%s\n' "PakForge dependencies are missing; installing them now..."
-  python3 -m pip install --upgrade rich pytz gmalg pycryptodome zstandard
+  printf '%s\n' "[PakForge] Core dependencies are still installing in the background." >&2
+  exec python3 "\$SCRIPT_DIR/pakforge_first_run.py" --script "\$SCRIPT_DIR/pakforge.py" "\$@"
 fi
 
 if [ "\${PAKFORGE_NO_UPDATE:-0}" != "1" ] && [ -d "\$SCRIPT_DIR/.git" ]; then

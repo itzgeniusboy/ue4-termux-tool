@@ -105,7 +105,7 @@ After setup, run this single command:
 pakforge
 ```
 
-The command opens the PakForge menu immediately. Each launch checks for missing Python dependencies and starts a safe, non-blocking fast-forward update check in the background. The update log is stored at `~/.local/state/pakforge/update.log`. To disable one background update check, use `PAKFORGE_NO_UPDATE=1 pakforge`. The compatibility command `tool` remains available for repak-based workflows.
+The command opens the PakForge first-run screen immediately. If Python modules, Lua 5.1, or the optional `repak` compatibility binary are missing, a transparent setup worker starts in the background using official package managers and a fixed `pip`/Cargo command. The setup output is stored at `~/.local/state/pakforge/setup.log`, and status is available with `pakforge setup-status`. The first-run screen lets you press Enter to retry the check or `q` to exit; once setup reaches `ready`, the original PakForge command continues automatically. Use `PAKFORGE_NO_SETUP=1 pakforge` to disable automatic dependency setup. Background update checks remain separate in `~/.local/state/pakforge/update.log`; disable them with `PAKFORGE_NO_UPDATE=1 pakforge`. The compatibility command `tool` remains available for repak-based workflows.
 
 The menu provides:
 

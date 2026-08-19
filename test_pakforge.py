@@ -57,6 +57,19 @@ def main() -> None:
     assert unpack_parsed.workers == 2
     repack_parsed = pakforge.parser().parse_args(["repack", "source.pak", "edited", "out.pak", "--workers", "3"])
     assert repack_parsed.workers == 3
+    with tempfile.TemporaryDirectory(prefix="pakforge-setup-status-") as setup_state:
+        setup_env = os.environ.copy()
+        setup_env["XDG_STATE_HOME"] = setup_state
+        setup_status = subprocess.run(
+            [sys.executable, str(ROOT / "pakforge_setup.py"), "--status"],
+            cwd=ROOT,
+            env=setup_env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert setup_status.returncode == 0
+        assert json.loads(setup_status.stdout)["state"] in {"incomplete", "ready"}
     patch_parsed = pakforge.parser().parse_args(["repack", "source.pak", "edited", "out.pak", "--patch", "--verify"])
     assert patch_parsed.patch is True
     assert patch_parsed.verify is True
@@ -297,7 +310,7 @@ def main() -> None:
 
     version = run("--version")
     assert version.returncode == 0
-    assert version.stdout.strip() == "PakForge 1.3.7"
+    assert version.stdout.strip() == "PakForge 1.3.8"
 
     with tempfile.TemporaryDirectory(prefix="pakforge-test-") as raw:
         root = Path(raw)
