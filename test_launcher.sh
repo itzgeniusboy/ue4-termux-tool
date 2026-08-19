@@ -19,6 +19,6 @@ grep -Fq 'pakforge_setup.py' "$PREFIX_DIR/bin/pakforge"
 grep -Fq 'nohup python3' "$PREFIX_DIR/bin/pakforge"
 grep -Fq 'setup-status' "$PREFIX_DIR/bin/pakforge"
 grep -Fq 'PAKFORGE_DEFER_SETUP=1' "$ROOT/bootstrap.sh"
-grep -Fq 'remaining setup continues in the background' "$ROOT/bootstrap.sh"
-grep -Fq 'exec "${PREFIX:-/data/data/com.termux/files/usr}/bin/pakforge"' "$ROOT/bootstrap.sh"
+grep -Fq 'First-time setup is running in the background' "$ROOT/bootstrap.sh"
+grep -Fq 'exec "$PREFIX_DIR/bin/pakforge"' "$ROOT/bootstrap.sh"
 printf '%s\n' 'launcher-tests-ok'

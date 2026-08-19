@@ -65,7 +65,7 @@ Press **Allow** when Android asks for permission.
 curl -fsSL https://raw.githubusercontent.com/itzgeniusboy/ue4-termux-tool/main/bootstrap.sh | bash
 ```
 
-The public repository does not require GitHub login. This single command prepares the Termux prerequisites, downloads PakForge, creates both `pakforge` and `tool` commands, and then starts PakForge immediately. The optional Python parser dependencies, Lua 5.1 compiler, and `repak` compatibility binary continue installing in the background. Keep Termux available while setup finishes and inspect progress with `pakforge setup-status`.
+The public repository does not require GitHub login. This single command immediately shows the PakForge first-run screen, while a background bootstrap prepares the minimum Termux prerequisites, downloads PakForge, and creates both `pakforge` and `tool` commands. As soon as the launcher is ready, the screen hands off to PakForge; the optional Python parser dependencies, Lua 5.1 compiler, and `repak` compatibility binary continue installing in the background. Keep Termux available while setup finishes and inspect progress with `pakforge setup-status`.
 
 **Step 5 — open PakForge:**
 
@@ -106,7 +106,7 @@ After setup, run this single command:
 pakforge
 ```
 
-The command opens the PakForge first-run screen immediately. If Python modules, Lua 5.1, or the optional `repak` compatibility binary are missing, a transparent setup worker starts in the background using official package managers and a fixed `pip`/Cargo command. The setup output is stored at `~/.local/state/pakforge/setup.log`, and status is available with `pakforge setup-status`. The first-run screen lets you press Enter to retry the check or `q` to exit; once setup reaches `ready`, the original PakForge command continues automatically. Use `PAKFORGE_NO_SETUP=1 pakforge` to disable automatic dependency setup. Background update checks remain separate in `~/.local/state/pakforge/update.log`; disable them with `PAKFORGE_NO_UPDATE=1 pakforge`. The compatibility command `tool` remains available for repak-based workflows.
+The command opens the PakForge first-run screen immediately. During the very first bootstrap, the screen also remains visible while the minimum Termux runtime and repository are prepared. If Python modules, Lua 5.1, or the optional `repak` compatibility binary are missing, a transparent setup worker starts in the background using official package managers and a fixed `pip`/Cargo command. The setup output is stored at `~/.local/state/pakforge/setup.log`, and status is available with `pakforge setup-status`. The first-run screen lets you press Enter to retry the check or `q` to exit; once setup reaches `ready`, the original PakForge command continues automatically. Use `PAKFORGE_NO_SETUP=1 pakforge` to disable automatic dependency setup. Background update checks remain separate in `~/.local/state/pakforge/update.log`; disable them with `PAKFORGE_NO_UPDATE=1 pakforge`. The compatibility command `tool` remains available for repak-based workflows.
 
 The menu provides:
 

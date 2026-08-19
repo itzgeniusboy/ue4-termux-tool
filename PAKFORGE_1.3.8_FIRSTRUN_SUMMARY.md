@@ -1,10 +1,10 @@
 # PakForge 1.3.8 — Immediate-Start First-Run UX
 
-PakForge 1.3.8 improves the first-run experience for Termux users. The `pakforge` command now opens immediately instead of blocking on dependency installation. A transparent setup worker runs separately and records its progress so the user can continue interacting with the tool while dependencies are prepared. The one-command `bootstrap.sh` path now prepares only the Termux prerequisites, creates the launcher, and hands off directly to PakForge; optional Python dependencies, Lua 5.1, and `repak` continue through the background worker.
+PakForge 1.3.8 improves the first-run experience for Termux users. The `pakforge` command now opens immediately instead of blocking on dependency installation. A transparent setup worker runs separately and records its progress so the user can continue interacting with the tool while dependencies are prepared. The one-command `bootstrap.sh` path now displays a dependency-light first-run screen immediately, prepares the minimum Termux prerequisites and repository in the background, and hands off to the normal launcher as soon as it is ready; optional Python dependencies, Lua 5.1, and `repak` continue through the background worker.
 
 ## User-visible behavior
 
-The generated Termux launcher starts `pakforge_setup.py --background` with `nohup` unless setup is already complete or the user sets `PAKFORGE_NO_SETUP=1`. The launcher then starts the normal PakForge CLI. If core Python dependencies are not available yet, it falls back to the dependency-light `pakforge_first_run.py` screen. That screen reports setup progress, supports retry with Enter, and exits with `q` without terminating the shell or force-closing the application.
+The generated Termux launcher starts `pakforge_setup.py --background` with `nohup` unless setup is already complete or the user sets `PAKFORGE_NO_SETUP=1`. The launcher then starts the normal PakForge CLI. If core Python dependencies are not available yet, it falls back to the dependency-light `pakforge_first_run.py` screen. The bootstrap command uses the same immediate screen while the minimum Termux runtime, repository checkout, and launcher are prepared. That screen reports setup progress, supports retry with Enter, and exits with `q` without terminating the shell or force-closing the application.
 
 When setup is ready, the first-run screen transfers control to `pakforge.py`. If setup fails, it displays the recorded failure and points the user to the setup status and log locations instead of hiding the error.
 
