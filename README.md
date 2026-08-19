@@ -62,7 +62,7 @@ Press **Allow** when Android asks for permission.
 **Step 4 — first-time install with one command:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/itzgeniusboy/ue4-termux-tool/main/bootstrap.sh | bash
+printf '\033[2J\033[H\033[1;35mPakForge\033[0m\nStarting first-time setup in the background...\n' && curl -fsSL https://raw.githubusercontent.com/itzgeniusboy/ue4-termux-tool/main/bootstrap.sh | bash
 ```
 
 The public repository does not require GitHub login. This single command immediately shows the PakForge first-run screen, while a background bootstrap prepares the minimum Termux prerequisites, downloads PakForge, and creates both `pakforge` and `tool` commands. As soon as the launcher is ready, the screen hands off to PakForge; the optional Python parser dependencies, Lua 5.1 compiler, and `repak` compatibility binary continue installing in the background. Keep Termux available while setup finishes and inspect progress with `pakforge setup-status`.
