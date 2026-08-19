@@ -110,17 +110,17 @@ The command opens the PakForge Launcher immediately. During the very first boots
 
 The neon primary UI is now a single **PakForge Control Center**. Use `pakforge` for all normal work; the same generated launcher is also available as `tool`. The control center routes guided PAK work, inspection, unpacking, verified repacking, Lua injection, the auto pipeline, setup status, logs, and diagnostics without requiring users to remember separate commands.
 
-The primary menu provides:
+The primary menu provides digit-only choices; select an action by entering its number and pressing Enter. No CLI command is needed inside the menu:
 
 ```text
-01) Guided PAK workflow  •  auto unpack / repack
-02) Inspect PAK  •  metadata / capabilities / hashes
-03) Unpack PAK  •  optional Lua decompile
-04) Repack PAK  •  verify output
-05) Lua pipeline  •  compile / inject / verify
-06) Auto pipeline  •  unpack → edit → compile → repack
-07) Setup status / logs / diagnostics
-00) Exit
+1) Guided PAK workflow  •  auto unpack / repack
+2) Inspect PAK  •  metadata / capabilities / hashes
+3) Unpack PAK  •  optional Lua decompile
+4) Repack PAK  •  verify output
+5) Lua pipeline  •  compile / inject / verify
+6) Auto pipeline  •  unpack → edit → compile → repack
+7) Setup status / logs / diagnostics
+0) Exit
 ```
 
 The guided workflow selects a `.pak` from `PAK/`, unpacks it to `UNPACK/<name>/`, and repacks the edited workspace to `RESULT/<name>.pak` when PakForge is run again. Advanced flags remain available through the CLI for developers who need them. The old repak wrapper is not opened by default; use `UE4TOOL_LEGACY=1 tool --help` only when explicit legacy compatibility is required.

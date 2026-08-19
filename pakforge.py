@@ -1247,22 +1247,22 @@ def pakforge_control_center() -> None:
         menu = Table(show_header=False, box=ROUNDED, border_style=NEON['purple'], padding=(0, 2), expand=False)
         menu.add_column("Key", style=f"bold {NEON['cyan']}", width=5, justify="center")
         menu.add_column("PakForge control", style="bold white")
-        menu.add_row("01", "Guided PAK workflow  •  auto unpack / repack")
-        menu.add_row("02", "Inspect PAK  •  metadata / capabilities / hashes")
-        menu.add_row("03", "Unpack PAK  •  optional Lua decompile")
-        menu.add_row("04", "Repack PAK  •  verify output")
-        menu.add_row("05", "Lua pipeline  •  compile / inject / verify")
-        menu.add_row("06", "Auto pipeline  •  unpack → edit → compile → repack")
-        menu.add_row("07", "Setup status / logs / diagnostics")
-        menu.add_row("00", "Exit")
+        menu.add_row("1", "Guided PAK workflow  •  auto unpack / repack")
+        menu.add_row("2", "Inspect PAK  •  metadata / capabilities / hashes")
+        menu.add_row("3", "Unpack PAK  •  optional Lua decompile")
+        menu.add_row("4", "Repack PAK  •  verify output")
+        menu.add_row("5", "Lua pipeline  •  compile / inject / verify")
+        menu.add_row("6", "Auto pipeline  •  unpack → edit → compile → repack")
+        menu.add_row("7", "Setup status / logs / diagnostics")
+        menu.add_row("0", "Exit")
         console.print(Panel(menu, title=f"[bold {NEON['pink']}]PAKFORGE CONTROL CENTER[/bold {NEON['pink']}]", border_style=NEON['blue'], box=ROUNDED, expand=False))
         console.print(f"[bold {NEON['muted']}]One UI controls the complete PakForge workflow. Advanced CLI flags remain available.[/bold {NEON['muted']}]")
         choice = safe_input(f"[bold {NEON['cyan']}]SELECT ACTION:[/bold {NEON['cyan']}] ").strip().lower()
 
-        if choice in {"1", "01"}:
+        if choice == "1":
             _menu_guided(data_path)
             _menu_pause()
-        elif choice in {"2", "02"}:
+        elif choice == "2":
             pak = _menu_path("PAK file", str(data_path / "PAK"), must_exist=False)
             if pak and Path(pak).is_dir():
                 candidates = sorted(Path(pak).glob("*.pak"))
@@ -1270,20 +1270,20 @@ def pakforge_control_center() -> None:
             if pak and Path(pak).is_file():
                 _menu_run(["info", pak])
             _menu_pause()
-        elif choice in {"3", "03"}:
+        elif choice == "3":
             pak = _menu_path("Source PAK", must_exist=True)
             output = _menu_path("Output directory") if pak else ""
             if pak and output:
                 _menu_run(["unpack", pak, output, "--decompile-lua"])
             _menu_pause()
-        elif choice in {"4", "04"}:
+        elif choice == "4":
             source = _menu_path("Source PAK", must_exist=True)
             edited = _menu_path("Edited directory", must_exist=True) if source else ""
             output = _menu_path("Output PAK") if edited else ""
             if source and edited and output:
                 _menu_run(["repack", source, edited, output, "--verify"])
             _menu_pause()
-        elif choice in {"5", "05"}:
+        elif choice == "5":
             pak = _menu_path("Source PAK", must_exist=True)
             lua_dir = _menu_path("Lua source directory", must_exist=True) if pak else ""
             output = _menu_path("Output PAK") if lua_dir else ""
@@ -1291,7 +1291,7 @@ def pakforge_control_center() -> None:
                 target = _menu_path("Target prefix", "Script")
                 _menu_run(["lua-pipeline", "--pak", pak, "--lua-dir", lua_dir, "--output", output, "--target-prefix", target, "--compile-lua", "--verify"])
             _menu_pause()
-        elif choice in {"6", "06"}:
+        elif choice == "6":
             pak = _menu_path("Source PAK", must_exist=True)
             output = _menu_path("Output PAK") if pak else ""
             edit_dir = _menu_path("Edit directory (optional; press Enter to pause for edits)") if output else ""
@@ -1301,17 +1301,17 @@ def pakforge_control_center() -> None:
                     arguments.extend(["--edit-dir", edit_dir])
                 _menu_run(arguments)
             _menu_pause()
-        elif choice in {"7", "07"}:
+        elif choice == "7":
             setup_script = Path(__file__).with_name("pakforge_setup.py")
             if setup_script.is_file():
                 subprocess.run([sys.executable, str(setup_script), "--status"], check=False)
             _menu_run(["logs", "--tail", "20"])
             _menu_pause()
-        elif choice in {"0", "00", "q", "quit", "exit"}:
+        elif choice == "0":
             console.print(f"[bold {NEON['pink']}]PakForge closed.[/bold {NEON['pink']}]")
             return
         else:
-            console.print(f"[bold {NEON['red']}]Unknown action. Choose a number from the control center.[/bold {NEON['red']}]")
+            console.print(f"[bold {NEON['red']}]Unknown action. Choose a digit from 0 to 7.[/bold {NEON['red']}]")
             time.sleep(1)
 
 

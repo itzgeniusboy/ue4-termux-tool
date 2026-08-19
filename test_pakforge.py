@@ -319,6 +319,10 @@ def main() -> None:
     cli_source = (ROOT / "pakforge.py").read_text(encoding="utf-8")
     assert "PAKFORGE CONTROL CENTER" in cli_source
     assert "Guided PAK workflow  •  auto unpack / repack" in cli_source
+    assert 'menu.add_row("1", "Guided PAK workflow' in cli_source
+    assert 'menu.add_row("01"' not in cli_source
+    assert 'menu.add_row("0", "Exit")' in cli_source
+    assert 'menu.add_row("00"' not in cli_source
     assert "pakforge_control_center()" in cli_source
 
     version = run("--version")
