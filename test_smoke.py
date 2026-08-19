@@ -8,7 +8,14 @@ import time
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ue4tool import REPORT_ENDPOINT_DEFAULT, _send_report, sanitize_diagnostic_text, start_background_update
+from ue4tool import (
+    REPORT_ENDPOINT_DEFAULT,
+    ToolError,
+    _send_report,
+    execute_with_recovery,
+    sanitize_diagnostic_text,
+    start_background_update,
+)
 
 ROOT = Path(__file__).resolve().parent
 TOOL = ROOT / "ue4tool.py"
@@ -170,6 +177,22 @@ with tempfile.TemporaryDirectory(prefix="tool-report-test-") as report_tmp:
         with patch.dict(os.environ, default_env, clear=True), patch("builtins.input", return_value="y"), patch("ue4tool.urlrequest.urlopen", return_value=default_response) as default_sent:
             assert _send_report(reports[0]) is True
             assert default_sent.call_args.args[0].full_url == REPORT_ENDPOINT_DEFAULT
+
+    initial_report = Path(report_tmp) / "initial.json"
+    retry_report = Path(report_tmp) / "retry.json"
+    handler_calls = 0
+
+    def always_fail(_args):
+        nonlocal_handler = None
+        del nonlocal_handler
+        raise ToolError("repak failed with exit code 1", 1)
+
+    with patch("ue4tool.write_diagnostic", side_effect=[initial_report, retry_report]), patch(
+        "ue4tool.update_project", return_value=True
+    ), patch("ue4tool._send_report") as retry_send:
+        assert execute_with_recovery("unpack", always_fail, object()) is False
+        assert retry_send.call_args_list[0].args == (initial_report,)
+        assert retry_send.call_args_list[1].args == (retry_report,)
 
 started = time.perf_counter()
 help_result = subprocess.run([sys.executable, str(TOOL), "--help"], check=True, capture_output=True, text=True)

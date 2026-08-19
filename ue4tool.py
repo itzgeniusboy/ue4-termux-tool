@@ -475,6 +475,7 @@ def execute_with_recovery(command: str, handler, args: argparse.Namespace) -> bo
             retry_report = write_diagnostic(command, str(retry_exc), retry_exc.code)
             print(f"Retry failed: {sanitize_diagnostic_text(str(retry_exc))}", file=sys.stderr)
             print(f"New diagnostic saved locally: {retry_report}", file=sys.stderr)
+            _send_report(retry_report)
             return False
 
 
