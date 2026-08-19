@@ -1,6 +1,6 @@
 # PakForge SD-card-only interactive menu
 
-The following code is already integrated into `pakforge_core.py`. It assumes the existing module imports and helpers: `Path`, `console`, `NEON`, `escape`, `safe_input`, `human_size`, `TencentPakFile`, `dump_unpacking_log`, and `repack_pak_file_full`.
+The following code is integrated into `pakforge_core.py`. It assumes the existing module imports and helpers: `os`, `Path`, `console`, `NEON`, `escape`, `safe_input`, `human_size`, `TencentPakFile`, `dump_unpacking_log`, and `repack_pak_file_full`.
 
 ```python
 SDCARD_DOWNLOAD_DIR = Path("/sdcard/Download")
@@ -16,7 +16,8 @@ def ensure_sdcard_directories() -> bool:
         return True
     except OSError as exc:
         console.print(
-            f"[bold {NEON['red']}]Cannot access {SDCARD_DOWNLOAD_DIR}: {escape(str(exc))}[/bold {NEON['red']}]"
+            f"[bold {NEON['red']}]Cannot access {SDCARD_DOWNLOAD_DIR}: "
+            f"{escape(str(exc))}[/bold {NEON['red']}]"
         )
         console.print(
             f"[bold {NEON['cyan']}]Run Termux storage setup first, then retry.[/bold {NEON['cyan']}]"
@@ -38,36 +39,41 @@ def get_pak_files_from_sdcard() -> list[Path]:
     )
 
 
-def select_pak_from_sdcard(prompt: str) -> Path | None:
+def select_pak_from_sdcard(prompt: str = "Select file") -> Path | None:
     """Show a numbered PAK list and return the selected file."""
     pak_files = get_pak_files_from_sdcard()
     if not pak_files:
         console.print(
-            "[bold #FFAA00]No .pak files found in /sdcard/Download/. "
-            "Please copy your PAK file there.[/bold #FFAA00]"
+            f"[bold {NEON['yellow']}]No .pak files found in /sdcard/Download/. "
+            f"Please copy your PAK file there.[/bold {NEON['yellow']}]"
         )
         return None
 
-    console.print("[bold #00E5FF]PAK files in /sdcard/Download/[/bold #00E5FF]")
+    console.print(
+        f"[bold {NEON['yellow']}]📁 PAK files in /sdcard/Download/:[/bold {NEON['yellow']}]"
+    )
     for index, pak_file in enumerate(pak_files, 1):
         size = human_size(pak_file.stat().st_size)
         console.print(
-            f"[bold #39FF14]{index}[/bold #39FF14]. {pak_file.name} [dim]({size})[/dim]"
+            f"[bold {NEON['green']}][{index}][/bold {NEON['green']}] "
+            f"{pak_file.name} [dim]({size})[/dim]"
         )
 
     while True:
         choice = safe_input(
-            f"[bold #00E5FF]{prompt} (1-{len(pak_files)}):[/bold #00E5FF] "
+            f"[bold {NEON['cyan']}]{prompt}:[/bold {NEON['cyan']}] "
         ).strip()
         try:
             selected = int(choice)
         except ValueError:
-            console.print("[bold #FF0055]Please enter a valid number.[/bold #FF0055]")
+            console.print(
+                f"[bold {NEON['red']}]Please enter a valid number.[/bold {NEON['red']}]"
+            )
             continue
         if 1 <= selected <= len(pak_files):
             return pak_files[selected - 1]
         console.print(
-            f"[bold #FF0055]Please choose a number from 1 to {len(pak_files)}.[/bold #FF0055]"
+            f"[bold {NEON['red']}]Please choose a number from 1 to {len(pak_files)}.[/bold {NEON['red']}]"
         )
 
 
@@ -75,48 +81,66 @@ def _directory_has_files(directory: Path) -> bool:
     return directory.is_dir() and any(path.is_file() for path in directory.rglob("*"))
 
 
+def print_ultimate_banner() -> None:
+    """Render the compact purple-bordered beginner menu banner."""
+    os.system("cls" if os.name == "nt" else "clear")
+    console.print(
+        f"[bold {NEON['purple']}]═══════════════════════════════════════[/bold {NEON['purple']}]\n"
+        f"[bold {NEON['purple']}]          PAKFORGE ULTIMATE[/bold {NEON['purple']}]\n"
+        f"[bold {NEON['purple']}]═══════════════════════════════════════[/bold {NEON['purple']}]"
+    )
+
+
 def unpack_selected_sdcard_pak() -> None:
-    pak_file = select_pak_from_sdcard("Select PAK to unpack")
+    pak_file = select_pak_from_sdcard()
     if pak_file is None:
         return
 
     output_dir = SDCARD_UNPACKED_DIR / pak_file.stem
     try:
-        console.print(f"[bold #00E5FF]Unpacking: {pak_file.name}[/bold #00E5FF]")
+        console.print(
+            f"[bold {NEON['green']}]✅ Extracting to {output_dir}/[/bold {NEON['green']}]"
+        )
         pak = TencentPakFile(pak_file)
         pak.dump(output_dir, workers=4)
         dump_unpacking_log(pak, output_dir / f"Debug_{pak_file.stem}.log")
-        console.print(f"[bold #39FF14]Unpacked files: {output_dir}[/bold #39FF14]")
+        console.print(
+            f"[bold {NEON['green']}]✅ Done! Edit files in {SDCARD_EDIT_DIR}/[/bold {NEON['green']}]"
+        )
     except Exception as exc:
-        console.print(f"[bold #FF0055]Unpack failed: {escape(str(exc))}[/bold #FF0055]")
+        console.print(
+            f"[bold {NEON['red']}]Unpack failed: {escape(str(exc))}[/bold {NEON['red']}]"
+        )
 
 
 def repack_selected_sdcard_pak() -> None:
     SDCARD_EDIT_DIR.mkdir(parents=True, exist_ok=True)
     if not _directory_has_files(SDCARD_EDIT_DIR):
         console.print(
-            "[bold #FFAA00]EDIT folder is empty. Place your modified .lua or .luac "
-            "files in /sdcard/Download/EDIT/ first.[/bold #FFAA00]"
+            f"[bold {NEON['yellow']}]EDIT folder is empty. Place your modified files "
+            f"in /sdcard/Download/EDIT/ first.[/bold {NEON['yellow']}]"
         )
         return
 
-    pak_file = select_pak_from_sdcard("Select source PAK to repack")
+    pak_file = select_pak_from_sdcard("Source PAK")
     if pak_file is None:
         return
 
+    default_target = "Content/Lua/Mods"
+    console.print(
+        f"[bold {NEON['cyan']}]📁 Source PAK: {pak_file.name}[/bold {NEON['cyan']}]"
+    )
+    console.print(
+        f"[bold {NEON['cyan']}]📁 Using files from: {SDCARD_EDIT_DIR}/[/bold {NEON['cyan']}]"
+    )
     target_path = safe_input(
-        "[bold #00E5FF]Target path inside the PAK "
-        "(example: Content/Lua/Mods):[/bold #00E5FF] "
-    ).strip().replace("\\", "/").strip("/")
-    if not target_path:
-        console.print("[bold #FF0055]A target path is required.[/bold #FF0055]")
-        return
+        f"[bold {NEON['cyan']}]📁 Target path (inside PAK) "
+        f"[default: {default_target}]:[/bold {NEON['cyan']}] "
+    ).strip()
+    target_path = (target_path or default_target).replace("\\", "/").strip("/")
 
     output_pak = SDCARD_DOWNLOAD_DIR / f"MODDED_{pak_file.name}"
     try:
-        console.print(
-            f"[bold #00E5FF]Repacking with Lua injection: {pak_file.name}[/bold #00E5FF]"
-        )
         pak = TencentPakFile(pak_file)
         count = repack_pak_file_full(
             pak,
@@ -127,25 +151,39 @@ def repack_selected_sdcard_pak() -> None:
             workers=4,
         )
         if count <= 0:
-            console.print("[bold #FF0055]No files were repacked.[/bold #FF0055]")
+            console.print(
+                f"[bold {NEON['red']}]No files were repacked.[/bold {NEON['red']}]"
+            )
             return
-        console.print(f"[bold #39FF14]Repacked {count} file(s).[/bold #39FF14]")
-        console.print(f"[bold #39FF14]Output: {output_pak}[/bold #39FF14]")
+
+        # Re-opening the generated PAK exercises the native index/hash parser.
+        TencentPakFile(output_pak)
+        console.print(
+            f"[bold {NEON['green']}]✅ Repacked {count} files to: {output_pak}[/bold {NEON['green']}]"
+        )
+        console.print(
+            f"[bold {NEON['green']}]✅ Verification passed![/bold {NEON['green']}]"
+        )
     except Exception as exc:
-        console.print(f"[bold #FF0055]Repack failed: {escape(str(exc))}[/bold #FF0055]")
+        console.print(
+            f"[bold {NEON['red']}]Repack failed: {escape(str(exc))}[/bold {NEON['red']}]"
+        )
 
 
-def main_menu() -> None:
-    """Simple SD-card-only menu for beginner-friendly PAK workflows."""
+def main_menu():
+    """Compact beginner menu for the fixed Termux SD-card workflow."""
     if not ensure_sdcard_directories():
         return
 
     while True:
-        console.print("\n[bold #00E5FF]1.[/bold #00E5FF] UNPACK PAK")
-        console.print("[bold #00E5FF]2.[/bold #00E5FF] REPACK PAK (with Lua injection)")
-        console.print("[bold #00E5FF]3.[/bold #00E5FF] EXIT")
+        print_ultimate_banner()
+        console.print(f"[bold {NEON['green']}]1. UNPACK PAK[/bold {NEON['green']}]")
+        console.print(
+            f"[bold {NEON['green']}]2. REPACK PAK (Lua Inject)[/bold {NEON['green']}]"
+        )
+        console.print(f"[bold {NEON['green']}]3. EXIT[/bold {NEON['green']}]")
         choice = safe_input(
-            "[bold #00E5FF]Select an option (1-3):[/bold #00E5FF] "
+            f"[bold {NEON['cyan']}]SELECT (1-3):[/bold {NEON['cyan']}] "
         ).strip()
 
         if choice == "1":
@@ -153,14 +191,16 @@ def main_menu() -> None:
         elif choice == "2":
             repack_selected_sdcard_pak()
         elif choice == "3":
-            console.print("[bold #39FF14]Goodbye.[/bold #39FF14]")
             return
         else:
-            console.print("[bold #FF0055]Please select 1, 2, or 3.[/bold #FF0055]")
-
-        safe_input("[bold #00E5FF]Press Enter to return to the menu...[/bold #00E5FF]")
+            console.print(
+                f"[bold {NEON['red']}]Please select 1, 2, or 3.[/bold {NEON['red']}]"
+            )
+            safe_input(
+                f"[bold {NEON['cyan']}]Press Enter to continue...[/bold {NEON['cyan']}] "
+            )
 ```
 
-The CLI no-argument and `menu` entry points now call this `main_menu()` implementation. The complete integrated source is `pakforge_core.py`.
+The no-argument `pakforge` and `tool` entry points call this `main_menu()` implementation. The normal interface uses only `/sdcard/Download/`, `/sdcard/Download/EDIT/`, `/sdcard/Download/UNPACKED/`, and `/sdcard/Download/MODDED_*.pak`.
 
-The repack action intentionally asks for the target path inside the PAK because that path cannot be inferred safely for every project. All filesystem locations remain under `/sdcard/Download/`.
+The repack action defaults to `Content/Lua/Mods`. It reopens the generated PAK with the native parser before displaying `✅ Verification passed!`, so the success message reflects an actual structural parse rather than an unconditional print.

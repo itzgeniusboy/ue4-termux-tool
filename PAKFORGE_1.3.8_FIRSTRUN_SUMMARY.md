@@ -12,9 +12,23 @@ When setup is ready, the first-run screen transfers control to `pakforge.py`. If
 
 The generated `tool` command now opens the same neon PakForge UI as `pakforge`, avoiding two different beginner experiences. The older repak-based wrapper remains available explicitly with `UE4TOOL_LEGACY=1 tool ...`.
 
-## Unified control center
+## PAKFORGE ULTIMATE beginner menu
 
-The neon primary UI now presents one **PakForge Control Center**. It is the single normal place to start guided PAK work, inspect PAK metadata, unpack with optional Lua decompilation, repack with verification, run the Lua pipeline, run the auto pipeline, view setup status/logs, and access diagnostics. The menu uses simple digit-only choices (`1` through `7`, with `0` to exit); users do not need to type CLI commands or manual paths inside the UI. PakForge numerically scans `PAK/` and infers the standard `UNPACK/<name>/`, `EDIT/<name>/`, `REPACK/<name>/`, `LUA/<name>/`, and `RESULT/<name>.pak` workspaces. The guided workflow selects a PAK from `PAK/`, unpacks it to `UNPACK/<name>/` on the first run, and repacks the edited workspace to `RESULT/<name>.pak` on the next run. Advanced CLI flags remain available for developers, while the normal `pakforge` and `tool` entry points open the same neon interface.
+The normal neon interface is now a compact three-option menu with no submenus or typed CLI commands:
+
+```text
+═══════════════════════════════════════
+          PAKFORGE ULTIMATE
+═══════════════════════════════════════
+
+1. UNPACK PAK
+2. REPACK PAK (Lua Inject)
+3. EXIT
+
+SELECT (1-3):
+```
+
+All interactive filesystem operations use the Termux SD-card layout. PAK files are selected from `/sdcard/Download/`, extracted files are written to `/sdcard/Download/UNPACKED/<pak_name>/`, edits are read from `/sdcard/Download/EDIT/`, and the repacked result is written to `/sdcard/Download/MODDED_<pak_name>.pak`. If the EDIT folder is empty, the menu shows `EDIT folder is empty. Place your modified files in /sdcard/Download/EDIT/ first.`. Repack defaults to the target path `Content/Lua/Mods`; after writing the output, PakForge reopens it with the native parser and shows `✅ Verification passed!` only after that structural check succeeds. Advanced developer workflows remain available through CLI subcommands, while normal `pakforge` and `tool` launches open this same interface.
 
 ## Startup auto-update
 

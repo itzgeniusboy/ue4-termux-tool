@@ -332,11 +332,11 @@ def main() -> None:
     assert "def unpack_selected_sdcard_pak()" in core_source
     assert "def repack_selected_sdcard_pak()" in core_source
     assert "No .pak files found in /sdcard/Download/. Please copy your PAK file there." in core_source
-    assert "EDIT folder is empty. Place your modified .lua or .luac files in /sdcard/Download/EDIT/ first." in core_source
+    assert "EDIT folder is empty. Place your modified files in /sdcard/Download/EDIT/ first." in core_source
     assert 'output_pak = SDCARD_DOWNLOAD_DIR / f"MODDED_{pak_file.name}"' in core_source
     core_menu = core_source[core_source.index("def main_menu():"):]
     assert 'UNPACK PAK' in core_menu
-    assert 'REPACK PAK (with Lua injection)' in core_menu
+    assert 'REPACK PAK (Lua Inject)' in core_menu
     assert 'EXIT' in core_menu
     assert 'PAK TOOL' not in core_menu
     assert 'data_path / "PAK"' not in core_menu
