@@ -40,6 +40,7 @@ try:
         repack_pak_file_full,
         repack_pak_file_patch,
         repack_pak_file_with_block_display,
+        set_operation_log_callback,
     )
 except ImportError as exc:
     raise SystemExit(
@@ -1506,6 +1507,7 @@ def main() -> int:
         args.func(args)
         return 0
     operation = NativeOperationLog(args.command or "menu", args)
+    set_operation_log_callback(operation.event)
     try:
         if args.command in (None, "menu"):
             operation.event("menu_started")
@@ -1530,6 +1532,7 @@ def main() -> int:
     finally:
         operation.event("operation_finished")
         operation.close()
+        set_operation_log_callback(None)
 
 
 if __name__ == "__main__":

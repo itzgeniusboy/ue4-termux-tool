@@ -320,13 +320,23 @@ def main() -> None:
         menu_root = Path(menu_root)
         download_dir = menu_root / "Download"
         edit_dir = download_dir / "EDIT"
-        download_dir.mkdir()
+        unpacked_dir = download_dir / "UNPACKED"
+        with patch.object(pakforge_core, "SDCARD_DOWNLOAD_DIR", download_dir), patch.object(
+            pakforge_core, "SDCARD_EDIT_DIR", edit_dir
+        ), patch.object(pakforge_core, "SDCARD_UNPACKED_DIR", unpacked_dir):
+            assert pakforge_core.ensure_sdcard_directories()
+            assert download_dir.is_dir()
+            assert edit_dir.is_dir()
+            assert unpacked_dir.is_dir()
+        download_dir.mkdir(exist_ok=True)
         (edit_dir / "Mods").mkdir(parents=True)
         source_pak = download_dir / "base.pak"
         source_pak.write_bytes(b"source-pak")
         (edit_dir / "Mods" / "one.lua").write_text("return 1\\n", encoding="utf-8")
         (edit_dir / "Mods" / "two.luac").write_bytes(b"lua51")
         (edit_dir / "Mods" / "ignore.txt").write_text("not lua", encoding="utf-8")
+        assert pakforge_core._directory_has_files(edit_dir)
+        assert not pakforge_core._directory_has_files(download_dir / "empty")
         calls = {}
 
         def fake_menu_pak(path):
@@ -351,19 +361,29 @@ def main() -> None:
             output_path.write_bytes(b"verified-lua-pak")
             return len(calls["files"])
 
-        with patch.object(pakforge_core, "SDCARD_DOWNLOAD_DIR", download_dir), patch.object(
-            pakforge_core, "SDCARD_EDIT_DIR", edit_dir
-        ), patch.object(
-            pakforge_core, "select_pak_from_sdcard", return_value=source_pak
-        ), patch.object(
-            pakforge_core, "safe_input", return_value=""
-        ), patch.object(
-            pakforge_core, "TencentPakFile", side_effect=fake_menu_pak
-        ), patch.object(
-            pakforge_core, "repack_pak_file_full", side_effect=fake_menu_repack
-        ):
-            pakforge_core.lua_inject_selected_sdcard_pak()
+        events = []
+        pakforge_core.set_operation_log_callback(
+            lambda name, **fields: events.append((name, fields))
+        )
+        try:
+            with patch.object(pakforge_core, "SDCARD_DOWNLOAD_DIR", download_dir), patch.object(
+                pakforge_core, "SDCARD_EDIT_DIR", edit_dir
+            ), patch.object(
+                pakforge_core, "select_pak_from_sdcard", return_value=source_pak
+            ), patch.object(
+                pakforge_core, "safe_input", return_value=""
+            ), patch.object(
+                pakforge_core, "TencentPakFile", side_effect=fake_menu_pak
+            ), patch.object(
+                pakforge_core, "repack_pak_file_full", side_effect=fake_menu_repack
+            ):
+                pakforge_core.lua_inject_selected_sdcard_pak()
+        finally:
+            pakforge_core.set_operation_log_callback(None)
 
+        assert [name for name, _ in events] == [
+            'menu_action_started', 'menu_action_succeeded'
+        ]
         assert calls == {
             "files": ["Mods/one.lua", "Mods/two.luac"],
             "target_path": "Content/Lua/Mods",
@@ -387,6 +407,8 @@ def main() -> None:
     assert "def unpack_selected_sdcard_pak()" in core_source
     assert "def repack_selected_sdcard_pak()" in core_source
     assert "def lua_inject_selected_sdcard_pak()" in core_source
+    assert "def _directory_has_files" in core_source
+    assert "def ensure_sdcard_directories" in core_source
     assert "No .pak files found in /sdcard/Download/. Please copy your PAK file there." in core_source
     assert "EDIT folder is empty. Place your modified files in /sdcard/Download/EDIT/ first." in core_source
     assert 'output_pak = SDCARD_DOWNLOAD_DIR / f"MODDED_{pak_file.name}"' in core_source

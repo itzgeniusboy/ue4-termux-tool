@@ -21,6 +21,7 @@ from functools import lru_cache
 from pathlib import PurePath, PurePosixPath, Path
 from typing import List, Dict, Tuple, Optional, Any
 import time
+import traceback
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn, TimeRemainingColumn
@@ -41,6 +42,27 @@ from Crypto.Util.Padding import unpad
 from zstandard import ZstdDecompressor, ZstdCompressionDict, DICT_TYPE_AUTO, ZstdCompressor
 
 console = Console(no_color=bool(os.environ.get('NO_COLOR') or os.environ.get('PAKFORGE_PLAIN')))
+
+_OPERATION_LOG_CALLBACK = None
+
+
+def set_operation_log_callback(callback) -> None:
+    """Attach or clear the CLI-owned structured operation logger."""
+    global _OPERATION_LOG_CALLBACK
+    _OPERATION_LOG_CALLBACK = callback
+
+
+def _log_operation_event(name: str, **fields: object) -> None:
+    """Emit a best-effort local event without affecting the PAK workflow."""
+    callback = _OPERATION_LOG_CALLBACK
+    if callback is None:
+        return
+    try:
+        callback(name, **fields)
+    except Exception:
+        # Logging must never make an otherwise valid PAK operation fail.
+        pass
+
 
 # ==================== NEON TERMINAL THEME ====================
 NEON = {
@@ -2062,9 +2084,18 @@ SDCARD_EDIT_DIR = SDCARD_DOWNLOAD_DIR / "EDIT"
 SDCARD_UNPACKED_DIR = SDCARD_DOWNLOAD_DIR / "UNPACKED"
 
 
+def _directory_has_files(directory: Path) -> bool:
+    """Return True when a directory contains at least one regular file."""
+    try:
+        return directory.is_dir() and any(path.is_file() for path in directory.rglob("*"))
+    except OSError:
+        return False
+
+
 def ensure_sdcard_directories() -> bool:
     """Create the only folders used by the interactive SD-card workflow."""
     try:
+        SDCARD_DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
         SDCARD_EDIT_DIR.mkdir(parents=True, exist_ok=True)
         SDCARD_UNPACKED_DIR.mkdir(parents=True, exist_ok=True)
         return True
@@ -2289,9 +2320,11 @@ def _verify_repacked_paths(output_pak: Path, expected_paths: list[str]) -> Tence
 def unpack_selected_sdcard_pak() -> None:
     pak_file = select_pak_from_sdcard()
     if pak_file is None:
+        _log_operation_event('menu_action_cancelled', operation='unpack')
         return
 
     output_dir = SDCARD_UNPACKED_DIR / pak_file.stem
+    _log_operation_event('menu_action_started', operation='unpack', source=str(pak_file), output=str(output_dir))
     try:
         console.print(
             f"[bold {NEON['green']}]✅ Extracting to {output_dir}/[/bold {NEON['green']}]"
@@ -2302,7 +2335,12 @@ def unpack_selected_sdcard_pak() -> None:
         console.print(
             f"[bold {NEON['green']}]✅ Done! Edit files in {SDCARD_EDIT_DIR}/[/bold {NEON['green']}]"
         )
+        _log_operation_event('menu_action_succeeded', operation='unpack', source=str(pak_file), output=str(output_dir))
     except Exception as exc:
+        _log_operation_event(
+            'menu_action_failed', operation='unpack', source=str(pak_file), output=str(output_dir),
+            error=f'{type(exc).__name__}: {exc}', traceback=traceback.format_exc(),
+        )
         console.print(f"[bold {NEON['red']}]Unpack failed: {escape(str(exc))}[/bold {NEON['red']}]")
 
 
@@ -2312,6 +2350,7 @@ def lua_inject_selected_sdcard_pak() -> None:
 
     pak_file = select_pak_from_sdcard("Source PAK")
     if pak_file is None:
+        _log_operation_event('menu_action_cancelled', operation='lua_inject')
         return
 
     default_target = "Content/Lua/Mods"
@@ -2322,6 +2361,7 @@ def lua_inject_selected_sdcard_pak() -> None:
     try:
         target_path = _safe_menu_target(target_path, default_target)
     except ValueError as exc:
+        _log_operation_event('menu_action_failed', operation='lua_inject', source=str(pak_file), error=f'{type(exc).__name__}: {exc}')
         console.print(f"[bold {NEON['red']}]Lua inject failed: {escape(str(exc))}[/bold {NEON['red']}]")
         return
 
@@ -2333,6 +2373,7 @@ def lua_inject_selected_sdcard_pak() -> None:
         key=lambda path: path.as_posix().casefold(),
     )
     if not lua_files:
+        _log_operation_event('menu_action_failed', operation='lua_inject', source=str(pak_file), error='No .lua or .luac files found in EDIT')
         console.print(
             f"[bold {NEON['yellow']}]No .lua or .luac files found in {SDCARD_EDIT_DIR}/.[/bold {NEON['yellow']}]"
         )
@@ -2343,6 +2384,10 @@ def lua_inject_selected_sdcard_pak() -> None:
         normalize_pak_path(PurePath(target_path) / source.relative_to(SDCARD_EDIT_DIR))
         for source in lua_files
     ]
+    _log_operation_event(
+        'menu_action_started', operation='lua_inject', source=str(pak_file), output=str(output_pak),
+        target_path=target_path, file_count=len(lua_files),
+    )
     try:
         # Stage only Lua files so images, configs, and other EDIT content cannot
         # accidentally enter this Lua-only injection workflow.
@@ -2373,13 +2418,22 @@ def lua_inject_selected_sdcard_pak() -> None:
             f"[bold {NEON['green']}]✅ Lua-injected {count} files to: {output_pak}[/bold {NEON['green']}]"
         )
         console.print(f"[bold {NEON['green']}]✅ Verification passed![/bold {NEON['green']}]")
+        _log_operation_event(
+            'menu_action_succeeded', operation='lua_inject', source=str(pak_file), output=str(output_pak),
+            target_path=target_path, file_count=count,
+        )
     except Exception as exc:
+        _log_operation_event(
+            'menu_action_failed', operation='lua_inject', source=str(pak_file), output=str(output_pak),
+            target_path=target_path, error=f'{type(exc).__name__}: {exc}', traceback=traceback.format_exc(),
+        )
         console.print(f"[bold {NEON['red']}]Lua inject failed: {escape(str(exc))}[/bold {NEON['red']}]")
 
 
 def repack_selected_sdcard_pak() -> None:
     SDCARD_EDIT_DIR.mkdir(parents=True, exist_ok=True)
     if not _directory_has_files(SDCARD_EDIT_DIR):
+        _log_operation_event('menu_action_failed', operation='repack_full', error='EDIT folder is empty')
         console.print(
             f"[bold {NEON['yellow']}]EDIT folder is empty. Place your modified files in /sdcard/Download/EDIT/ first.[/bold {NEON['yellow']}]"
         )
@@ -2387,6 +2441,7 @@ def repack_selected_sdcard_pak() -> None:
 
     pak_file = select_pak_from_sdcard("Source PAK")
     if pak_file is None:
+        _log_operation_event('menu_action_cancelled', operation='repack_full')
         return
 
     default_target = "Content/Lua/Mods"
@@ -2400,6 +2455,7 @@ def repack_selected_sdcard_pak() -> None:
     try:
         target_path = _safe_menu_target(target_path, default_target)
     except ValueError as exc:
+        _log_operation_event('menu_action_failed', operation='repack_full', source=str(pak_file), error=f'{type(exc).__name__}: {exc}')
         console.print(f"[bold {NEON['red']}]Repack failed: {escape(str(exc))}[/bold {NEON['red']}]")
         return
 
@@ -2409,6 +2465,10 @@ def repack_selected_sdcard_pak() -> None:
         for source in SDCARD_EDIT_DIR.rglob('*')
         if source.is_file()
     ]
+    _log_operation_event(
+        'menu_action_started', operation='repack_full', source=str(pak_file), output=str(output_pak),
+        target_path=target_path, file_count=len(expected_paths),
+    )
     try:
         pak = TencentPakFile(pak_file)
         count = repack_pak_file_full(
@@ -2428,7 +2488,15 @@ def repack_selected_sdcard_pak() -> None:
             f"[bold {NEON['green']}]✅ Repacked {count} files to: {output_pak}[/bold {NEON['green']}]"
         )
         console.print(f"[bold {NEON['green']}]✅ Verification passed![/bold {NEON['green']}]")
+        _log_operation_event(
+            'menu_action_succeeded', operation='repack_full', source=str(pak_file), output=str(output_pak),
+            target_path=target_path, file_count=count,
+        )
     except Exception as exc:
+        _log_operation_event(
+            'menu_action_failed', operation='repack_full', source=str(pak_file), output=str(output_pak),
+            target_path=target_path, error=f'{type(exc).__name__}: {exc}', traceback=traceback.format_exc(),
+        )
         console.print(f"[bold {NEON['red']}]Repack failed: {escape(str(exc))}[/bold {NEON['red']}]")
 
 
