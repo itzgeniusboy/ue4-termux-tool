@@ -15,26 +15,34 @@ else
   pkg install -y python python-pip unzip rust
 fi
 
-if command -v repak >/dev/null 2>&1; then
-  printf '%s\n' "[2/5] repak is already installed."
-else
-  printf '%s\n' "[2/5] Installing repak from its upstream repository..."
-  cargo install --git https://github.com/trumank/repak --locked --bin repak --no-default-features
-fi
-
-# Cargo installs executables in ~/.cargo/bin, which is not always present in
-# an existing Termux shell PATH. Put a stable shim in $PREFIX/bin so `tool`
-# and future Termux sessions can always find the binary.
-if [ ! -x "$REPAK_CARGO_BIN" ]; then
-  printf '%s\n' "Error: repak was installed but not found at $REPAK_CARGO_BIN." >&2
-  exit 1
-fi
 mkdir -p "$BIN_DIR"
-ln -sf "$REPAK_CARGO_BIN" "$BIN_DIR/repak"
+if [ "${PAKFORGE_DEFER_SETUP:-0}" = "1" ]; then
+  printf '%s\n' "[2/5] Deferring optional repak and Python dependencies to background setup."
+else
+  if command -v repak >/dev/null 2>&1; then
+    printf '%s\n' "[2/5] repak is already installed."
+  else
+    printf '%s\n' "[2/5] Installing repak from its upstream repository..."
+    cargo install --git https://github.com/trumank/repak --locked --bin repak --no-default-features
+  fi
+
+  # Cargo installs executables in ~/.cargo/bin, which is not always present in
+  # an existing Termux shell PATH. Put a stable shim in $PREFIX/bin so `tool`
+  # and future Termux sessions can always find the binary.
+  if [ ! -x "$REPAK_CARGO_BIN" ]; then
+    printf '%s\n' "Error: repak was installed but not found at $REPAK_CARGO_BIN." >&2
+    exit 1
+  fi
+  ln -sf "$REPAK_CARGO_BIN" "$BIN_DIR/repak"
+fi
 export PATH="$BIN_DIR:$CARGO_BIN_DIR:$PATH"
 
-printf '%s\n' "[3/5] Installing PakForge Python dependencies..."
-python3 -m pip install --upgrade rich pytz gmalg pycryptodome zstandard
+if [ "${PAKFORGE_DEFER_SETUP:-0}" = "1" ]; then
+  printf '%s\n' "[3/5] Deferring PakForge Python dependencies to background setup."
+else
+  printf '%s\n' "[3/5] Installing PakForge Python dependencies..."
+  python3 -m pip install --upgrade rich pytz gmalg pycryptodome zstandard
+fi
 
 printf '%s\n' "[4/5] Installing tool commands..."
 rm -f "$BIN_DIR/ue4tool" "$BIN_DIR/pakforge"
@@ -88,7 +96,9 @@ EOF
 chmod 0755 "$BIN_DIR/tool" "$BIN_DIR/pakforge"
 
 printf '%s\n' "[5/5] Verifying installation..."
-command -v repak >/dev/null 2>&1 || { printf '%s\n' "Error: repak is not available in PATH." >&2; exit 1; }
+if [ "${PAKFORGE_DEFER_SETUP:-0}" != "1" ]; then
+  command -v repak >/dev/null 2>&1 || { printf '%s\n' "Error: repak is not available in PATH." >&2; exit 1; }
+fi
 command -v "$BIN_DIR/tool" >/dev/null 2>&1 || { printf '%s\n' "Error: tool command was not installed." >&2; exit 1; }
 command -v "$BIN_DIR/pakforge" >/dev/null 2>&1 || { printf '%s\n' "Error: pakforge command was not installed." >&2; exit 1; }
 printf '%s\n' "Done. Run: pakforge"

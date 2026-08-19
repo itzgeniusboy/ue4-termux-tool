@@ -1,6 +1,6 @@
 # PakForge 1.3.8 — Immediate-Start First-Run UX
 
-PakForge 1.3.8 improves the first-run experience for Termux users. The `pakforge` command now opens immediately instead of blocking on dependency installation. A transparent setup worker runs separately and records its progress so the user can continue interacting with the tool while dependencies are prepared.
+PakForge 1.3.8 improves the first-run experience for Termux users. The `pakforge` command now opens immediately instead of blocking on dependency installation. A transparent setup worker runs separately and records its progress so the user can continue interacting with the tool while dependencies are prepared. The one-command `bootstrap.sh` path now prepares only the Termux prerequisites, creates the launcher, and hands off directly to PakForge; optional Python dependencies, Lua 5.1, and `repak` continue through the background worker.
 
 ## User-visible behavior
 

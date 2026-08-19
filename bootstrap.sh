@@ -30,11 +30,13 @@ else
   git clone --depth 1 "$REPO" "$PROJECT" || fail "Could not download the repository."
 fi
 
-printf '%s\n' "[4/4] Installing PakForge..."
+printf '%s\n' "[4/4] Installing PakForge launcher..."
 cd "$PROJECT"
 chmod +x install-termux.sh ue4tool.py pakforge.py pakforge_setup.py pakforge_first_run.py update-termux.sh
-SKIP_PACKAGES=1 bash install-termux.sh
+PAKFORGE_DEFER_SETUP=1 SKIP_PACKAGES=1 bash install-termux.sh
 
 printf '%s\n' ""
-printf '%s\n' "PakForge is ready. Start it with: pakforge"
+printf '%s\n' "PakForge is starting now; remaining setup continues in the background."
+printf '%s\n' "Check progress with: pakforge setup-status"
 printf '%s\n' "The compatibility wrapper remains available as: tool"
+exec "${PREFIX:-/data/data/com.termux/files/usr}/bin/pakforge"

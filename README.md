@@ -65,7 +65,7 @@ Press **Allow** when Android asks for permission.
 curl -fsSL https://raw.githubusercontent.com/itzgeniusboy/ue4-termux-tool/main/bootstrap.sh | bash
 ```
 
-The public repository does not require GitHub login. This single command installs the required packages, downloads PakForge, installs the Python parser dependencies, builds `repak` for the compatibility wrapper, and creates both `pakforge` and `tool` commands. The first installation can take several minutes because Rust builds `repak`; do not close Termux during that step.
+The public repository does not require GitHub login. This single command prepares the Termux prerequisites, downloads PakForge, creates both `pakforge` and `tool` commands, and then starts PakForge immediately. The optional Python parser dependencies, Lua 5.1 compiler, and `repak` compatibility binary continue installing in the background. Keep Termux available while setup finishes and inspect progress with `pakforge setup-status`.
 
 **Step 5 — open PakForge:**
 
@@ -73,7 +73,7 @@ The public repository does not require GitHub login. This single command install
 pakforge
 ```
 
-The original repak wrapper remains available as `tool`. The same first-run command can be run again later to repair or refresh the installation.
+The original repak wrapper remains available as `tool`. If you use the manual installer path, run `pakforge` after the launcher is created; the same command can be run again later to repair or refresh the installation.
 
 ## Manual setup
 
@@ -87,8 +87,9 @@ termux-setup-storage
 cd ~
 git clone https://github.com/itzgeniusboy/ue4-termux-tool.git
 cd ue4-termux-tool
-chmod +x bootstrap.sh install-termux.sh ue4tool.py pakforge.py update-termux.sh
-bash install-termux.sh
+chmod +x bootstrap.sh install-termux.sh ue4tool.py pakforge.py pakforge_setup.py pakforge_first_run.py update-termux.sh
+PAKFORGE_DEFER_SETUP=1 SKIP_PACKAGES=1 bash install-termux.sh
+pakforge
 ```
 
 The public clone works without GitHub login:
