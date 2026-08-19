@@ -110,7 +110,7 @@ The command opens the PakForge Launcher immediately. During the very first boots
 
 The neon primary UI is now a single **PakForge Control Center**. Use `pakforge` for all normal work; the same generated launcher is also available as `tool`. The control center routes guided PAK work, inspection, unpacking, verified repacking, Lua injection, the auto pipeline, setup status, logs, and diagnostics without requiring users to remember separate commands.
 
-The primary menu provides digit-only choices; select an action by entering its number and pressing Enter. No CLI command is needed inside the menu:
+The primary menu provides digit-only choices; select an action by entering its number and pressing Enter. No CLI command or manual path command is needed inside the menu. PakForge scans `PAK/` numerically, then automatically uses `UNPACK/<name>/`, `EDIT/<name>/`, `REPACK/<name>/`, `LUA/<name>/`, and `RESULT/<name>.pak` when those standard workspaces are available:
 
 ```text
 1) Guided PAK workflow  •  auto unpack / repack

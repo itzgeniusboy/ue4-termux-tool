@@ -36,6 +36,7 @@ try:
         safe_input,
         print_banner,
         guided_pak_workflow,
+        display_file_selector,
         repack_pak_file_full,
         repack_pak_file_patch,
         repack_pak_file_with_block_display,
@@ -1212,27 +1213,51 @@ def repack_command(args: argparse.Namespace) -> None:
     print(f"Repacked {count} file(s) to: {output}")
 
 
-def _menu_path(prompt: str, default: str | None = None, must_exist: bool = False) -> str:
-    suffix = f" [{default}]" if default else ""
-    value = safe_input(f"[bold {NEON['cyan']}]{prompt}{suffix}:[/bold {NEON['cyan']}] ").strip()
-    value = value or (default or "")
-    path = Path(value).expanduser()
-    if must_exist and not path.exists():
-        console.print(f"[bold {NEON['red']}]Path not found:[/bold {NEON['red']}] {path}")
-        return ""
-    return str(path)
+def _menu_select_pak(data_path: Path, prompt: str = "Select a PAK") -> Path | None:
+    """Select a PAK numerically from the standard workspace folder."""
+    pak_dir = data_path / "PAK"
+    pak_dir.mkdir(parents=True, exist_ok=True)
+    pak_file, _ = display_file_selector(f"{prompt} from {pak_dir}:", pak_dir)
+    return pak_file
+
+
+def _menu_files_dir(*candidates: Path, suffixes: tuple[str, ...] = ()) -> Path | None:
+    """Return the first standard workspace directory containing matching files."""
+    for candidate in candidates:
+        if not candidate.is_dir():
+            continue
+        files = [path for path in candidate.rglob("*") if path.is_file()]
+        if suffixes:
+            files = [path for path in files if path.suffix.lower() in suffixes]
+        if files:
+            return candidate
+    return None
+
+
+def _menu_workspace(data_path: Path, pak_file: Path) -> tuple[Path, Path, Path]:
+    """Resolve standard unpack, edit, and result paths without text prompts."""
+    stem = pak_file.stem
+    unpack_dir = data_path / "UNPACK" / stem
+    edit_dir = _menu_files_dir(
+        data_path / "REPACK" / stem,
+        data_path / "EDIT" / stem,
+        unpack_dir,
+    ) or unpack_dir
+    result_pak = data_path / "RESULT" / pak_file.name
+    result_pak.parent.mkdir(parents=True, exist_ok=True)
+    return unpack_dir, edit_dir, result_pak
 
 
 def _menu_run(arguments: list[str]) -> None:
     """Run an existing PakForge CLI command from the central UI."""
-    console.print(f"[bold {NEON['blue']}]Running:[/bold {NEON['blue']}] pakforge {' '.join(shlex.quote(item) for item in arguments)}")
+    console.print(f"[bold {NEON['blue']}]Running selected workflow...[/bold {NEON['blue']}]")
     result = subprocess.run([sys.executable, str(Path(__file__).resolve()), *arguments], check=False)
     if result.returncode:
-        console.print(f"[bold {NEON['red']}]Command exited with status {result.returncode}.[/bold {NEON['red']}]")
+        console.print(f"[bold {NEON['red']}]Workflow exited with status {result.returncode}.[/bold {NEON['red']}]")
 
 
 def _menu_pause() -> None:
-    safe_input(f"\n[bold {NEON['muted']}]Press Enter to return to the PakForge control center...[/bold {NEON['muted']}] ")
+    time.sleep(1.2)
 
 
 def _menu_guided(data_path: Path) -> None:
@@ -1263,43 +1288,50 @@ def pakforge_control_center() -> None:
             _menu_guided(data_path)
             _menu_pause()
         elif choice == "2":
-            pak = _menu_path("PAK file", str(data_path / "PAK"), must_exist=False)
-            if pak and Path(pak).is_dir():
-                candidates = sorted(Path(pak).glob("*.pak"))
-                pak = str(candidates[0]) if len(candidates) == 1 else _menu_path("PAK file", must_exist=True)
-            if pak and Path(pak).is_file():
-                _menu_run(["info", pak])
+            pak = _menu_select_pak(data_path, "Select PAK to inspect")
+            if pak:
+                _menu_run(["info", str(pak)])
             _menu_pause()
         elif choice == "3":
-            pak = _menu_path("Source PAK", must_exist=True)
-            output = _menu_path("Output directory") if pak else ""
-            if pak and output:
-                _menu_run(["unpack", pak, output, "--decompile-lua"])
+            pak = _menu_select_pak(data_path, "Select PAK to unpack")
+            if pak:
+                unpack_dir, _, _ = _menu_workspace(data_path, pak)
+                _menu_run(["unpack", str(pak), str(unpack_dir), "--decompile-lua"])
             _menu_pause()
         elif choice == "4":
-            source = _menu_path("Source PAK", must_exist=True)
-            edited = _menu_path("Edited directory", must_exist=True) if source else ""
-            output = _menu_path("Output PAK") if edited else ""
-            if source and edited and output:
-                _menu_run(["repack", source, edited, output, "--verify"])
+            pak = _menu_select_pak(data_path, "Select PAK to repack")
+            if pak:
+                unpack_dir, edit_dir, output = _menu_workspace(data_path, pak)
+                if not edit_dir.is_dir() or not any(edit_dir.rglob("*")):
+                    console.print(f"[bold {NEON['yellow']}]No workspace found. Select 3 first, then edit files in {unpack_dir}.[/bold {NEON['yellow']}]")
+                else:
+                    _menu_run(["repack", str(pak), str(edit_dir), str(output), "--verify"])
             _menu_pause()
         elif choice == "5":
-            pak = _menu_path("Source PAK", must_exist=True)
-            lua_dir = _menu_path("Lua source directory", must_exist=True) if pak else ""
-            output = _menu_path("Output PAK") if lua_dir else ""
-            if pak and lua_dir and output:
-                target = _menu_path("Target prefix", "Script")
-                _menu_run(["lua-pipeline", "--pak", pak, "--lua-dir", lua_dir, "--output", output, "--target-prefix", target, "--compile-lua", "--verify"])
+            pak = _menu_select_pak(data_path, "Select PAK for Lua pipeline")
+            if pak:
+                unpack_dir, edit_dir, output = _menu_workspace(data_path, pak)
+                lua_dir = _menu_files_dir(
+                    data_path / "LUA" / pak.stem,
+                    data_path / "EDIT" / pak.stem,
+                    data_path / "REPACK" / pak.stem,
+                    edit_dir,
+                    suffixes=(".lua",),
+                )
+                if lua_dir is None:
+                    console.print(f"[bold {NEON['yellow']}]No .lua files found. Select 3 first, then edit files in {unpack_dir}.[/bold {NEON['yellow']}]")
+                else:
+                    _menu_run(["lua-pipeline", "--pak", str(pak), "--lua-dir", str(lua_dir), "--output", str(output), "--target-prefix", "Content/Lua", "--compile-lua", "--verify"])
             _menu_pause()
         elif choice == "6":
-            pak = _menu_path("Source PAK", must_exist=True)
-            output = _menu_path("Output PAK") if pak else ""
-            edit_dir = _menu_path("Edit directory (optional; press Enter to pause for edits)") if output else ""
-            if pak and output:
-                arguments = ["auto", "--pak", pak, "--output", output, "--target-prefix", "Content/Lua"]
-                if edit_dir:
-                    arguments.extend(["--edit-dir", edit_dir])
-                _menu_run(arguments)
+            pak = _menu_select_pak(data_path, "Select PAK for auto pipeline")
+            if pak:
+                unpack_dir, edit_dir, output = _menu_workspace(data_path, pak)
+                lua_dir = _menu_files_dir(edit_dir, unpack_dir, suffixes=(".lua",))
+                if lua_dir is None:
+                    console.print(f"[bold {NEON['yellow']}]No edited .lua workspace found. Select 3 first, edit the extracted files, then retry.[/bold {NEON['yellow']}]")
+                else:
+                    _menu_run(["auto", "--pak", str(pak), "--edit-dir", str(lua_dir), "--output", str(output), "--target-prefix", "Content/Lua"])
             _menu_pause()
         elif choice == "7":
             setup_script = Path(__file__).with_name("pakforge_setup.py")

@@ -324,6 +324,10 @@ def main() -> None:
     assert 'menu.add_row("0", "Exit")' in cli_source
     assert 'menu.add_row("00"' not in cli_source
     assert "pakforge_control_center()" in cli_source
+    assert "def _menu_select_pak" in cli_source
+    assert "def _menu_workspace" in cli_source
+    assert "_menu_path" not in cli_source
+    assert "Running selected workflow" in cli_source
 
     version = run("--version")
     assert version.returncode == 0
