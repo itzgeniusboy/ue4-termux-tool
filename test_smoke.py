@@ -23,6 +23,11 @@ assert "/sdcard/private/game.pak" not in sanitized
 for script in ("setup.sh", "update-termux.sh", "install-termux.sh"):
     subprocess.run(["bash", "-n", str(ROOT / script)], check=True)
 
+installer_text = (ROOT / "install-termux.sh").read_text(encoding="utf-8")
+assert 'CARGO_BIN_DIR="${CARGO_HOME:-$HOME/.cargo}/bin"' in installer_text
+assert 'ln -sf "$REPAK_CARGO_BIN" "$BIN_DIR/repak"' in installer_text
+assert 'export PATH="$BIN_DIR:$CARGO_BIN_DIR:$PATH"' in installer_text
+
 with tempfile.TemporaryDirectory(prefix="ue4tool-test-") as tmp:
     base = Path(tmp)
     source = base / "unpacked"

@@ -247,8 +247,12 @@ tool --help
 If `repak` is missing:
 
 ```bash
+export PATH="$HOME/.cargo/bin:$PREFIX/bin:$PATH"
 bash ~/ue4-termux-tool/install-termux.sh
+repak --help
 ```
+
+The installer now creates a stable `$PREFIX/bin/repak` link after Cargo builds `repak`, so the command remains available after Termux is restarted.
 
 If storage paths do not work:
 
@@ -274,6 +278,8 @@ The local report contains only the operation name, sanitized error text, exit co
 ```bash
 TOOL_NO_AUTO_RETRY=1 tool unpack game.pak
 ```
+
+> Installation errors, including a missing `repak` PATH entry, do not send a Telegram report. Reporting begins only when a supported `tool unpack`, `tool repack`, or `tool inject` operation reaches a handled failure. This prevents package-install logs and storage setup output from being forwarded.
 
 ### Optional anonymous relay
 

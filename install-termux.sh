@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PREFIX_DIR="${PREFIX:-/data/data/com.termux/files/usr}"
 BIN_DIR="$PREFIX_DIR/bin"
+CARGO_BIN_DIR="${CARGO_HOME:-$HOME/.cargo}/bin"
+REPAK_CARGO_BIN="$CARGO_BIN_DIR/repak"
 
 if [ "${SKIP_PACKAGES:-0}" = "1" ]; then
   printf '%s\n' "[1/4] Required Termux packages already prepared."
@@ -20,8 +22,18 @@ else
   cargo install --git https://github.com/trumank/repak --locked --bin repak --no-default-features
 fi
 
-printf '%s\n' "[3/4] Installing tool command..."
+# Cargo installs executables in ~/.cargo/bin, which is not always present in
+# an existing Termux shell PATH. Put a stable shim in $PREFIX/bin so `tool`
+# and future Termux sessions can always find the binary.
+if [ ! -x "$REPAK_CARGO_BIN" ]; then
+  printf '%s\n' "Error: repak was installed but not found at $REPAK_CARGO_BIN." >&2
+  exit 1
+fi
 mkdir -p "$BIN_DIR"
+ln -sf "$REPAK_CARGO_BIN" "$BIN_DIR/repak"
+export PATH="$BIN_DIR:$CARGO_BIN_DIR:$PATH"
+
+printf '%s\n' "[3/4] Installing tool command..."
 rm -f "$BIN_DIR/ue4tool"
 cat > "$BIN_DIR/tool" <<EOF
 #!/data/data/com.termux/files/usr/bin/bash
