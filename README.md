@@ -1,6 +1,6 @@
 # UE4 Termux Tool
 
-A beginner-friendly Termux toolkit for authorized Unreal Engine 4 projects. **PakForge** is the primary Tencent/UE PAK parser and repacking utility bundled in this repository. The original `tool` command remains available as a repak-based compatibility wrapper for standard UE4 workflows.
+A beginner-friendly Termux toolkit for authorized Unreal Engine 4 projects. **PakForge** is the primary Tencent/UE PAK parser and repacking utility bundled in this repository. Both `pakforge` and `tool` now open the same neon PakForge UI; the old repak-based wrapper remains available explicitly with `UE4TOOL_LEGACY=1 tool ...`.
 
 PakForge supports direct PAK inspection, extraction, block-aware repacking, batch extraction, SHA-256 manifests, developer profiles, preflight checks, asset diffs, and reproducible build reports. The project does not bypass DRM, defeat anti-cheat, recover unknown encryption keys, or modify third-party online games. Use it only with your own project files or with explicit permission.
 
@@ -20,8 +20,8 @@ PakForge supports direct PAK inspection, extraction, block-aware repacking, batc
 | `pakforge diff` | Compare two asset directories and create a JSON change report. |
 | `pakforge build` | Run a profile-driven preflight, Lua build, backup, and verification workflow. |
 | `pakforge auto` | Run the offline unpack, Lua decompile, edit, Lua 5.1 compile, repack, and verify loop in one command. |
-| `tool logs` | List structured operation logs and show the latest log tail. |
-| `tool unpack/repack/inject` | Existing repak-based compatibility workflows. |
+| `tool` | Alias for the same neon PakForge UI as `pakforge`. |
+| `UE4TOOL_LEGACY=1 tool ...` | Explicitly access the old repak-based compatibility wrapper. |
 
 ## Neon terminal theme
 
@@ -73,7 +73,7 @@ The public repository does not require GitHub login. This single command immedia
 pakforge
 ```
 
-The original repak wrapper remains available as `tool`. If you use the manual installer path, run `pakforge` after the launcher is created; the same command can be run again later to repair or refresh the installation.
+The `tool` command is an alias for the same neon PakForge UI. If you need the old repak-based wrapper, use `UE4TOOL_LEGACY=1 tool ...`. If you use the manual installer path, run `pakforge` after the launcher is created; the same command can be run again later to repair or refresh the installation.
 
 ## Manual setup
 
@@ -174,7 +174,7 @@ pakforge manifest /sdcard/Download/game-unpacked
 pakforge verify /sdcard/Download/game-unpacked
 ```
 
-The `--target-prefix` value must be a relative PAK directory; parent traversal is rejected. PakForge refuses to replace an existing output by default. Use `--overwrite` only after keeping a separate copy of important data. The `--is-od` option is available for OD/custom PAK handling. The original `tool` command remains available for repak-based `unpack`, `repack`, `inject`, `info`, `batch-unpack`, `manifest`, and `verify` workflows.
+The `--target-prefix` value must be a relative PAK directory; parent traversal is rejected. PakForge refuses to replace an existing output by default. Use `--overwrite` only after keeping a separate copy of important data. The `--is-od` option is available for OD/custom PAK handling. The `tool` command opens the same native PakForge CLI as `pakforge`. The old repak-based `unpack`, `repack`, `inject`, `info`, `batch-unpack`, `manifest`, and `verify` workflows remain available with `UE4TOOL_LEGACY=1 tool ...`.
 
 The native `unpack` and `repack` commands accept `--workers N` (default `4`). Extraction uses atomic per-file replacement and updates the progress display from the coordinator thread. Repack stages edited input files concurrently, then keeps payload serialization single-threaded so offsets, hashes, and index order remain deterministic. If the Termux runtime cannot create a worker pool, PakForge falls back to single-threaded processing. Set `--workers 1` for the most conservative memory profile.
 
@@ -188,7 +188,7 @@ The `auto` command is intended for authorized offline/test projects. It creates 
 
 ## Structured bug logs
 
-Every command run through the native `pakforge` CLI or legacy `tool` wrapper creates an append-only JSONL operation log containing the operation name, execution steps, repak command summary, stdout/stderr, exit code, retry result, Python/Termux context, and traceback when an unexpected exception occurs. AES keys, tokens, passwords, and other secret-like arguments are redacted. The detailed log stays local; only the existing sanitized diagnostic report is eligible for the optional anonymous relay.
+Every command run through the native `pakforge` CLI or its `tool` alias creates an append-only JSONL operation log containing the operation name, execution steps, repak command summary, stdout/stderr, exit code, retry result, Python/Termux context, and traceback when an unexpected exception occurs. AES keys, tokens, passwords, and other secret-like arguments are redacted. The detailed log stays local; only the existing sanitized diagnostic report is eligible for the optional anonymous relay.
 
 Show recent logs from the legacy wrapper:
 

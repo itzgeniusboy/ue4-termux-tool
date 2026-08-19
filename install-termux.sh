@@ -48,6 +48,10 @@ printf '%s\n' "[4/5] Installing tool commands..."
 rm -f "$BIN_DIR/ue4tool" "$BIN_DIR/pakforge"
 cat > "$BIN_DIR/tool" <<EOF
 #!/data/data/com.termux/files/usr/bin/bash
+set -euo pipefail
+if [ "\${UE4TOOL_LEGACY:-0}" != "1" ]; then
+  exec "$BIN_DIR/pakforge" "\$@"
+fi
 exec python3 "$SCRIPT_DIR/ue4tool.py" "\$@"
 EOF
 cat > "$BIN_DIR/pakforge" <<EOF

@@ -39,4 +39,7 @@ grep -Fq 'SPINNER' "$ROOT/pakforge_first_run.py"
 grep -Fq 'format_bytes' "$ROOT/pakforge_first_run.py"
 grep -Fq '\033[H\033[J' "$ROOT/pakforge_first_run.py"
 grep -Fq 'exec "$PREFIX_DIR/bin/pakforge"' "$ROOT/bootstrap.sh"
+grep -Fq 'UE4TOOL_LEGACY' "$PREFIX_DIR/bin/tool"
+grep -Fq "exec \"$PREFIX_DIR/bin/pakforge\"" "$PREFIX_DIR/bin/tool"
+UE4TOOL_LEGACY=1 PATH="$PREFIX_DIR/bin:$REAL_PATH" bash "$PREFIX_DIR/bin/tool" --help
 printf '%s\n' 'launcher-tests-ok'
