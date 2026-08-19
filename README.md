@@ -1,20 +1,21 @@
 # UE4 Termux Tool
 
-A beginner-friendly Python CLI for authorized Unreal Engine 4 projects on Termux. It intentionally provides only three core workflows: **PAK unpack**, **PAK repack**, and **Lua inject**.
+A beginner-friendly Termux toolkit for authorized Unreal Engine 4 projects. **PakForge** is the primary Tencent/UE PAK parser and repacking utility bundled in this repository. The original `tool` command remains available as a repak-based compatibility wrapper for standard UE4 workflows.
 
-The project delegates UE4 PAK parsing and writing to [repak](https://github.com/trumank/repak). It does not bypass DRM, defeat anti-cheat, recover unknown encryption keys, or modify third-party online games. Use it only with your own project files or with explicit permission.
+PakForge supports direct PAK inspection, extraction, block-aware repacking, batch extraction, and SHA-256 manifests. The project does not bypass DRM, defeat anti-cheat, recover unknown encryption keys, or modify third-party online games. Use it only with your own project files or with explicit permission.
 
 ## Core commands
 
 | Command | Purpose |
 |---|---|
-| `unpack` | Extract a UE4 `.pak` through `repak`. |
-| `repack` | Create a new UE4 `.pak` from an unpacked directory. |
-| `inject` | Unpack a PAK, copy Lua files into it, and create a new PAK. |
-| `info` | Show safe PAK metadata and a SHA-256 digest; optionally export JSON. |
-| `batch-unpack` | Unpack every `.pak` file in a directory. |
-| `manifest` | Create a SHA-256 manifest for an unpacked or edited directory. |
-| `verify` | Detect missing, changed, or extra files against a manifest. |
+| `pakforge` | Primary direct PAK parser command. |
+| `pakforge info` | Inspect PAK version, mount point, entries, compression, encryption, and sizes. |
+| `pakforge unpack` | Extract a Tencent/UE PAK and create a debug log plus manifest. |
+| `pakforge repack` | Repack edited files using the source PAK as a template. |
+| `pakforge batch-unpack` | Extract every `.pak` file in a directory. |
+| `pakforge manifest` | Create a SHA-256 manifest for an unpacked or edited directory. |
+| `pakforge verify` | Detect missing, changed, or extra files against a manifest. |
+| `tool unpack/repack/inject` | Existing repak-based compatibility workflows. |
 
 ## First-time setup for new Termux users
 
@@ -46,15 +47,15 @@ Press **Allow** when Android asks for permission.
 curl -fsSL https://raw.githubusercontent.com/itzgeniusboy/ue4-termux-tool/main/setup.sh | bash
 ```
 
-The public repository does not require GitHub login. The setup automatically installs the required packages, downloads the project, builds `repak`, installs the `tool` command, verifies the installation, and shows any error clearly. The first installation can take several minutes because Rust builds `repak`; do not close Termux during that step.
+The public repository does not require GitHub login. The setup automatically installs Python parser dependencies, downloads the project, builds `repak` for the compatibility wrapper, installs both `pakforge` and `tool`, verifies the installation, and shows any error clearly. The first installation can take several minutes because Rust builds `repak`; do not close Termux during that step.
 
-**Step 5 — open the tool:**
+**Step 5 — open PakForge:**
 
 ```bash
-tool
+pakforge
 ```
 
-After the first setup, only `tool` is needed. The setup can be run again later to repair or refresh the installation.
+The original repak wrapper remains available as `tool`. The setup can be run again later to repair or refresh the installation.
 
 ## Manual setup
 
@@ -63,12 +64,12 @@ If you prefer to run each step yourself:
 ```bash
 pkg update -y
 pkg upgrade -y
-pkg install -y git python unzip rust curl
+pkg install -y git python python-pip unzip rust curl
 termux-setup-storage
 cd ~
 git clone https://github.com/itzgeniusboy/ue4-termux-tool.git
 cd ue4-termux-tool
-chmod +x install-termux.sh ue4tool.py update-termux.sh
+chmod +x install-termux.sh ue4tool.py pakforge.py update-termux.sh
 bash install-termux.sh
 ```
 
@@ -83,10 +84,10 @@ git clone https://github.com/itzgeniusboy/ue4-termux-tool.git
 After setup, run this single command:
 
 ```bash
-tool
+pakforge
 ```
 
-The command opens the menu immediately and starts a non-blocking update check in the background. It checks the public GitHub repository, uses a lock so duplicate checks do not run together, and only rebuilds the tool when a new commit is found. The update log is stored at `~/.cache/tool-update.log`. To skip automatic updating for one launch, use `TOOL_NO_AUTO_UPDATE=1 tool`.
+The command opens the PakForge menu immediately. The compatibility command `tool` retains the repository's background update check and repak-based menu. To skip automatic updating for one compatibility launch, use `TOOL_NO_AUTO_UPDATE=1 tool`.
 
 The menu provides:
 
@@ -102,7 +103,7 @@ The menu provides:
 0) Exit
 ```
 
-The menu checks whether `repak` is installed, searches `/sdcard/Download/` for `.pak` files, asks for the required folders, and applies simple defaults. For Lua injection, the default Lua folder is `/sdcard/Download/lua`, the default PAK destination is `Script/`, and the output filename is generated automatically.
+The PakForge menu searches `/sdcard/Download/` for `.pak` files, shows parser-specific metadata, extracts with progress, creates debug logs and manifests, and supports the original PAK/EDIT/RESULT folder workflow. The `tool` menu continues to check `repak` and supports Lua injection.
 
 If the menu cannot find a file, enter its full path when prompted. Storage permission is enabled by running:
 
@@ -110,25 +111,28 @@ If the menu cannot find a file, enter its full path when prompted. Storage permi
 termux-setup-storage
 ```
 
-## Power command-line use
-
-The original three workflows remain available. The integrated power commands are:
+## PakForge command-line use
 
 ```bash
-# Show file metadata and a SHA-256 digest; optionally export JSON.
-tool info /sdcard/Download/game.pak --export /sdcard/Download/game-info.json
+# Inspect PAK entries, compression, encryption, and logical sizes.
+pakforge info /sdcard/Download/game.pak --export /sdcard/Download/game-info.json
 
-# Unpack every PAK in a folder into separate output directories.
-tool batch-unpack /sdcard/Download/paks /sdcard/Download/unpacked
+# Extract with a debug log and SHA-256 manifest.
+pakforge unpack /sdcard/Download/game.pak /sdcard/Download/game-unpacked
 
-# Create and verify a manifest for edited files.
-tool manifest /sdcard/Download/game-unpacked
-tool verify /sdcard/Download/game-unpacked
+# Repack edited files using the source PAK template.
+pakforge repack /sdcard/Download/game.pak \
+  /sdcard/Download/game-unpacked /sdcard/Download/game-result.pak --full
+
+# Process multiple PAK files.
+pakforge batch-unpack /sdcard/Download/paks /sdcard/Download/unpacked
+
+# Create and verify an edited-directory manifest.
+pakforge manifest /sdcard/Download/game-unpacked
+pakforge verify /sdcard/Download/game-unpacked
 ```
 
-Unpack, repack, and inject now refuse to replace an existing output by default. Use `--overwrite` only after keeping a separate copy of important data. The original PAK is still protected by default; `inject --in-place` remains an explicit opt-in and does not create a backup.
-
-`info` reports safe file metadata and never reads or uploads PAK contents. Manifests contain only relative file paths, file sizes, and SHA-256 digests. Batch unpack skips non-empty output directories unless `--overwrite` is supplied.
+PakForge refuses to replace an existing output by default. Use `--overwrite` only after keeping a separate copy of important data. The `--is-od` option is available for OD/custom PAK handling. The original `tool` command remains available for repak-based `unpack`, `repack`, `inject`, `info`, `batch-unpack`, `manifest`, and `verify` workflows.
 
 ## Simple command-line use
 

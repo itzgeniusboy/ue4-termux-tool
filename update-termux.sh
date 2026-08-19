@@ -14,6 +14,6 @@ if [ "$before" = "$after" ]; then
 fi
 
 printf '%s\n' "New version found. Installing changes..."
-chmod +x install-termux.sh ue4tool.py update-termux.sh
+chmod +x install-termux.sh ue4tool.py pakforge.py update-termux.sh
 bash install-termux.sh
 printf '%s\n' "Update complete."

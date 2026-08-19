@@ -36,14 +36,16 @@ fi
 
 cd "$PROJECT"
 printf '%s\n' "[5/5] Installing repak and the tool command..."
-chmod +x install-termux.sh ue4tool.py update-termux.sh
+chmod +x install-termux.sh ue4tool.py pakforge.py update-termux.sh
 SKIP_PACKAGES=1 bash install-termux.sh
 
 export PATH="${PREFIX:-/data/data/com.termux/files/usr}/bin:$PATH"
 command -v repak >/dev/null 2>&1 || fail "repak was not installed."
 command -v tool >/dev/null 2>&1 || fail "tool command was not installed."
+command -v pakforge >/dev/null 2>&1 || fail "pakforge command was not installed."
 
 printf '%s\n' ""
 printf '%s\n' "Installation complete."
-printf '%s\n' "Open the tool by typing: tool"
+printf '%s\n' "Open PakForge by typing: pakforge"
+printf '%s\n' "The original repak wrapper remains available as: tool"
 printf '%s\n' "If Android storage permission was requested, press Allow and run tool again."

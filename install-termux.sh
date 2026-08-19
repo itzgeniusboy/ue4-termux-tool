@@ -8,17 +8,17 @@ CARGO_BIN_DIR="${CARGO_HOME:-$HOME/.cargo}/bin"
 REPAK_CARGO_BIN="$CARGO_BIN_DIR/repak"
 
 if [ "${SKIP_PACKAGES:-0}" = "1" ]; then
-  printf '%s\n' "[1/4] Required Termux packages already prepared."
+  printf '%s\n' "[1/5] Required Termux packages already prepared."
 else
-  printf '%s\n' "[1/4] Preparing Termux packages..."
+  printf '%s\n' "[1/5] Preparing Termux packages..."
   pkg update -y
-  pkg install -y python unzip rust
+  pkg install -y python python-pip unzip rust
 fi
 
 if command -v repak >/dev/null 2>&1; then
-  printf '%s\n' "[2/4] repak is already installed."
+  printf '%s\n' "[2/5] repak is already installed."
 else
-  printf '%s\n' "[2/4] Installing repak from its upstream repository..."
+  printf '%s\n' "[2/5] Installing repak from its upstream repository..."
   cargo install --git https://github.com/trumank/repak --locked --bin repak --no-default-features
 fi
 
@@ -33,15 +33,23 @@ mkdir -p "$BIN_DIR"
 ln -sf "$REPAK_CARGO_BIN" "$BIN_DIR/repak"
 export PATH="$BIN_DIR:$CARGO_BIN_DIR:$PATH"
 
-printf '%s\n' "[3/4] Installing tool command..."
-rm -f "$BIN_DIR/ue4tool"
+printf '%s\n' "[3/5] Installing PakForge Python dependencies..."
+python3 -m pip install --upgrade rich pytz gmalg pycryptodome zstandard
+
+printf '%s\n' "[4/5] Installing tool commands..."
+rm -f "$BIN_DIR/ue4tool" "$BIN_DIR/pakforge"
 cat > "$BIN_DIR/tool" <<EOF
 #!/data/data/com.termux/files/usr/bin/bash
 exec python3 "$SCRIPT_DIR/ue4tool.py" "\$@"
 EOF
-chmod 0755 "$BIN_DIR/tool"
+cat > "$BIN_DIR/pakforge" <<EOF
+#!/data/data/com.termux/files/usr/bin/bash
+exec python3 "$SCRIPT_DIR/pakforge.py" "\$@"
+EOF
+chmod 0755 "$BIN_DIR/tool" "$BIN_DIR/pakforge"
 
-printf '%s\n' "[4/4] Verifying installation..."
+printf '%s\n' "[5/5] Verifying installation..."
 command -v repak >/dev/null 2>&1 || { printf '%s\n' "Error: repak is not available in PATH." >&2; exit 1; }
 command -v "$BIN_DIR/tool" >/dev/null 2>&1 || { printf '%s\n' "Error: tool command was not installed." >&2; exit 1; }
-printf '%s\n' "Done. Run: tool"
+command -v "$BIN_DIR/pakforge" >/dev/null 2>&1 || { printf '%s\n' "Error: pakforge command was not installed." >&2; exit 1; }
+printf '%s\n' "Done. Run: pakforge"
