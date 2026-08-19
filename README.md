@@ -11,7 +11,7 @@ PakForge supports direct PAK inspection, extraction, block-aware repacking, batc
 | `pakforge` | Primary direct PAK parser command. |
 | `pakforge info` | Inspect PAK version, mount point, entries, compression, encryption, and sizes. |
 | `pakforge unpack` | Extract a Tencent/UE PAK and create a debug log plus manifest. |
-| `pakforge repack` | Repack edited files using the source PAK as a template. |
+| `pakforge repack` | Repack edited files, including force-add under a target PAK directory. |
 | `pakforge batch-unpack` | Extract every `.pak` file in a directory. |
 | `pakforge manifest` | Create a SHA-256 manifest for an unpacked or edited directory. |
 | `pakforge verify` | Detect missing, changed, or extra files against a manifest. |
@@ -114,7 +114,7 @@ termux-setup-storage
 ## PakForge command-line use
 
 ```bash
-# Inspect PAK entries, compression, encryption, and logical sizes.
+# Inspect PAK entries, compression, encryption, logical sizes, index encryption, and ZSTD dictionary usage.
 pakforge info /sdcard/Download/game.pak --export /sdcard/Download/game-info.json
 
 # Extract with a debug log and SHA-256 manifest.
@@ -124,6 +124,11 @@ pakforge unpack /sdcard/Download/game.pak /sdcard/Download/game-unpacked
 pakforge repack /sdcard/Download/game.pak \
   /sdcard/Download/game-unpacked /sdcard/Download/game-result.pak --full
 
+# Add or update files under a specific directory inside the PAK.
+pakforge repack /sdcard/Download/game.pak \
+  /sdcard/Download/my-files /sdcard/Download/game-result.pak \
+  --target-prefix Content/Lua/Mods
+
 # Process multiple PAK files.
 pakforge batch-unpack /sdcard/Download/paks /sdcard/Download/unpacked
 
@@ -132,7 +137,7 @@ pakforge manifest /sdcard/Download/game-unpacked
 pakforge verify /sdcard/Download/game-unpacked
 ```
 
-PakForge refuses to replace an existing output by default. Use `--overwrite` only after keeping a separate copy of important data. The `--is-od` option is available for OD/custom PAK handling. The original `tool` command remains available for repak-based `unpack`, `repack`, `inject`, `info`, `batch-unpack`, `manifest`, and `verify` workflows.
+The `--target-prefix` value must be a relative PAK directory; parent traversal is rejected. PakForge refuses to replace an existing output by default. Use `--overwrite` only after keeping a separate copy of important data. The `--is-od` option is available for OD/custom PAK handling. The original `tool` command remains available for repak-based `unpack`, `repack`, `inject`, `info`, `batch-unpack`, `manifest`, and `verify` workflows.
 
 ## Simple command-line use
 

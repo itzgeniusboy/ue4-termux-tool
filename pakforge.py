@@ -29,7 +29,7 @@ except ImportError as exc:
     ) from exc
 
 APP_NAME = "PakForge"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 MANIFEST_NAME = ".pakforge-manifest.json"
 
 
@@ -144,12 +144,26 @@ def info_command(args: argparse.Namespace) -> None:
     pak_path = require_file(args.pak, "PAK")
     pak = TencentPakFile(pak_path, is_od=args.is_od)
     rows = inventory(pak)
+    compression = {}
+    encryption = {}
+    for row in rows:
+        compression[row["compression"]] = compression.get(row["compression"], 0) + 1
+        encryption[row["encryption"]] = encryption.get(row["encryption"], 0) + 1
+    summary = {
+        "compression": dict(sorted(compression.items())),
+        "encryption": dict(sorted(encryption.items())),
+        "encrypted_index": bool(pak._pak_info.index_encrypted),
+        "zstd_dictionary": bool(getattr(pak, "_zstd_dict", None)),
+    }
     payload = {
         "tool": APP_NAME,
         "version": VERSION,
         "pak": str(pak_path),
         "pak_version": pak._pak_info.version,
         "mount_point": str(pak._mount_point),
+        "index_encrypted": summary["encrypted_index"],
+        "zstd_dictionary": summary["zstd_dictionary"],
+        "summary": summary,
         "entries": rows,
     }
     print(f"PAK: {pak_path}")
@@ -157,6 +171,10 @@ def info_command(args: argparse.Namespace) -> None:
     print(f"Mount point: {pak._mount_point}")
     print(f"Entries: {len(rows)}")
     print(f"Logical size: {sum(row['size'] for row in rows):,} bytes")
+    print(f"Index encrypted: {'yes' if summary['encrypted_index'] else 'no'}")
+    print(f"ZSTD dictionary: {'yes' if summary['zstd_dictionary'] else 'no'}")
+    print("Compression: " + ", ".join(f"{name}={count}" for name, count in summary["compression"].items()))
+    print("Encryption: " + ", ".join(f"{name}={count}" for name, count in summary["encryption"].items()))
     if args.export:
         export = Path(args.export).expanduser()
         export.parent.mkdir(parents=True, exist_ok=True)
@@ -201,6 +219,16 @@ def batch_command(args: argparse.Namespace) -> None:
     print(f"Batch complete: {completed}/{len(pak_files)} PAK(s) unpacked.")
 
 
+def normalize_target_prefix(value: str | None) -> str | None:
+    if not value:
+        return None
+    normalized = value.replace('\\\\', '/').replace('\\', '/').strip('/')
+    parts = [part for part in normalized.split('/') if part not in ('', '.')]
+    if not parts or any(part == '..' for part in parts):
+        raise SystemExit("Target prefix must be a relative PAK directory without '..'.")
+    return '/'.join(parts)
+
+
 def repack_command(args: argparse.Namespace) -> None:
     source_pak = require_file(args.source_pak, "Source PAK")
     edited = require_dir(args.edited_dir, "Edited directory")
@@ -208,7 +236,11 @@ def repack_command(args: argparse.Namespace) -> None:
     refuse_existing(output, args.overwrite)
     pak = TencentPakFile(source_pak, is_od=args.is_od)
     output.parent.mkdir(parents=True, exist_ok=True)
-    if args.full:
+    target_prefix = normalize_target_prefix(args.target_prefix)
+    if target_prefix:
+        count = repack_pak_file_full(pak, edited, output, target_path=target_prefix, force_add=True)
+        print(f"Added/updated files under PAK path: {target_prefix}")
+    elif args.full:
         count = repack_pak_file_full(pak, edited, output)
     else:
         count = repack_pak_file_with_block_display(pak, edited, output)
@@ -248,6 +280,7 @@ def parser() -> argparse.ArgumentParser:
     repack.add_argument("edited_dir")
     repack.add_argument("output")
     repack.add_argument("--full", action="store_true")
+    repack.add_argument("--target-prefix", help="add edited files under this relative directory inside the PAK")
     repack.add_argument("--overwrite", action="store_true")
     repack.add_argument("--is-od", action="store_true")
     repack.set_defaults(func=repack_command)

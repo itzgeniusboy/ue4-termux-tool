@@ -9,6 +9,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pakforge
+
 ROOT = Path(__file__).resolve().parent
 PAKFORGE = ROOT / "pakforge.py"
 
@@ -24,9 +26,23 @@ def run(*args: str) -> subprocess.CompletedProcess[str]:
 
 
 def main() -> None:
+    assert pakforge.normalize_target_prefix("Content\\\\Lua\\\\Mods") == "Content/Lua/Mods"
+    assert pakforge.normalize_target_prefix("/Content/Lua/Mods/") == "Content/Lua/Mods"
+    try:
+        pakforge.normalize_target_prefix("Content/../Config")
+    except SystemExit:
+        pass
+    else:
+        raise AssertionError("path traversal was accepted")
+
+    parsed = pakforge.parser().parse_args([
+        "repack", "source.pak", "edited", "output.pak", "--target-prefix", "Content/Lua"
+    ])
+    assert parsed.target_prefix == "Content/Lua"
+
     version = run("--version")
     assert version.returncode == 0
-    assert version.stdout.strip() == "PakForge 1.0.0"
+    assert version.stdout.strip() == "PakForge 1.1.0"
 
     with tempfile.TemporaryDirectory(prefix="pakforge-test-") as raw:
         root = Path(raw)
