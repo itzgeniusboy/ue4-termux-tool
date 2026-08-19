@@ -33,7 +33,7 @@ All interactive filesystem operations use the Termux SD-card layout. PAK files a
 
 ## Startup auto-update
 
-Every normal `pakforge` or `tool` launch starts a non-blocking check of the public `origin/main` branch. Fast-forward updates are downloaded in the background and launcher scripts are regenerated for the next launch, so the current UI is never interrupted. Dirty worktrees are detected and skipped safely instead of being overwritten. Update state is available through `pakforge update-status`, with details in `~/.local/state/pakforge/update-status.json` and `~/.local/state/pakforge/update.log`. Use `PAKFORGE_NO_UPDATE=1 pakforge` only when the update check must be disabled for one launch.
+Every normal `pakforge` or `tool` launch starts a non-blocking check of the public `origin/main` branch. The latest source is fetched in the background and launcher scripts are regenerated for the next launch, so the current UI is never interrupted. Tracked and untracked local edits are temporarily preserved in a timestamped Git stash; divergent local commits are preserved in a timestamped backup branch before `origin/main` is installed. Update state is available through `pakforge update-status`, with details in `~/.local/state/pakforge/update-status.json` and `~/.local/state/pakforge/update.log`. Use `PAKFORGE_NO_UPDATE=1 pakforge` only when the update check must be disabled for one launch.
 
 ## New command and opt-out
 

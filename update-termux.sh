@@ -5,26 +5,51 @@ PROJECT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 cd "$PROJECT"
 printf '%s\n' "Checking for PakForge updates..."
 
+dirty=0
+stash_name=""
 if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
-  printf '%s\n' "Update skipped: local changes or untracked files detected."
-  printf '%s\n' "Your files were not overwritten. Save or stash them, then retry."
-  exit 0
+  dirty=1
+  stash_name="pakforge-manual-update-$(date +%Y%m%d-%H%M%S)"
+  git stash push --include-untracked --message "$stash_name" >/dev/null
+  printf '%s\n' "Local edits saved in git stash: $stash_name"
 fi
+
+restore_stash() {
+  if [ "$dirty" = "1" ]; then
+    if git stash pop --index >/dev/null 2>&1; then
+      printf '%s\n' "Local edits restored."
+    else
+      printf '%s\n' "Local edits remain in git stash; run: git stash list && git stash pop" >&2
+    fi
+  fi
+}
 
 before="$(git rev-parse HEAD)"
 if ! git fetch --quiet origin main; then
+  restore_stash
   printf '%s\n' "Update failed while contacting GitHub. The current version was kept." >&2
   exit 1
 fi
-if ! git merge --ff-only --quiet origin/main; then
-  printf '%s\n' "Update skipped: fast-forward is unavailable. The current version was kept." >&2
-  exit 1
-fi
-after="$(git rev-parse HEAD)"
-
-if [ "$before" = "$after" ]; then
-  printf '%s\n' "Already up to date."
-  exit 0
+if git merge --ff-only --quiet origin/main; then
+  after="$(git rev-parse HEAD)"
+  if [ "$before" = "$after" ]; then
+    restore_stash
+    printf '%s\n' "Already up to date."
+    exit 0
+  fi
+else
+  backup_branch="pakforge-local-backup-$(date +%Y%m%d-%H%M%S)"
+  if git branch "$backup_branch" "$before" >/dev/null 2>&1 && git reset --hard origin/main >/dev/null 2>&1; then
+    printf '%s\n' "origin/main installed. Previous local commits preserved in branch: $backup_branch"
+    if [ "$dirty" = "1" ]; then
+      printf '%s\n' "Local edits remain safely saved in git stash: $stash_name"
+    fi
+    after="$(git rev-parse HEAD)"
+  else
+    restore_stash
+    printf '%s\n' "Update skipped: local work could not be preserved safely." >&2
+    exit 1
+  fi
 fi
 
 printf '%s\n' "New version found. Refreshing launchers..."

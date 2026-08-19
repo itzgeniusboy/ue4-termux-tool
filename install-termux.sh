@@ -81,23 +81,63 @@ if [ "\${PAKFORGE_NO_UPDATE:-0}" != "1" ] && [ -d "\$SCRIPT_DIR/.git" ]; then
       cd "\$SCRIPT_DIR"
       now="\$(date -Iseconds)"
       printf '{"state":"running","time":"%s","message":"Checking origin/main"}\n' "\$now" > "\$UPDATE_STATUS"
-      if [ -n "\$(git status --porcelain --untracked-files=no)" ]; then
-        printf '%s PakForge update skipped: local changes detected.\n' "\$now" >> "\$UPDATE_LOG"
-        printf '{"state":"skipped","time":"%s","message":"Local changes detected; no files were overwritten."}\n' "\$now" > "\$UPDATE_STATUS"
-        exit 0
+      dirty=0
+      stash_name=""
+      if [ -n "\$(git status --porcelain --untracked-files=all)" ]; then
+        dirty=1
+        stash_name="pakforge-autoupdate-\$(date +%Y%m%d-%H%M%S)"
+        if git stash push --include-untracked --message "\$stash_name" >/dev/null 2>&1; then
+          printf '%s PakForge auto-stashed local changes as %s before update.\n' "\$now" "\$stash_name" >> "\$UPDATE_LOG"
+        else
+          printf '%s PakForge update failed: could not auto-stash local changes.\n' "\$now" >> "\$UPDATE_LOG"
+          printf '{"state":"failed","time":"%s","message":"Local changes could not be backed up; current version was kept."}\n' "\$now" > "\$UPDATE_STATUS"
+          exit 0
+        fi
       fi
+      restore_stash() {
+        if [ "\$dirty" = "1" ]; then
+          if git stash pop --index >/dev/null 2>&1; then
+            printf '%s PakForge restored local changes after update failure.\n' "\$now" >> "\$UPDATE_LOG"
+          else
+            printf '%s PakForge could not automatically restore local changes; use git stash list and git stash pop.\n' "\$now" >> "\$UPDATE_LOG"
+          fi
+        fi
+      }
       if ! git fetch --quiet origin main; then
+        restore_stash
         printf '%s PakForge update failed during fetch.\n' "\$now" >> "\$UPDATE_LOG"
         printf '{"state":"failed","time":"%s","message":"GitHub fetch failed; current version was kept."}\n' "\$now" > "\$UPDATE_STATUS"
         exit 0
       fi
+      before="\$(git rev-parse HEAD)"
       if git merge --ff-only --quiet origin/main; then
-        printf '%s PakForge updated from origin/main.\n' "\$now" >> "\$UPDATE_LOG"
-        printf '{"state":"updated","time":"%s","message":"Latest origin/main downloaded; it will be active on the next launch."}\n' "\$now" > "\$UPDATE_STATUS"
-        SKIP_PACKAGES=1 PAKFORGE_DEFER_SETUP=1 bash "\$SCRIPT_DIR/install-termux.sh" >> "\$UPDATE_LOG" 2>&1 || true
+        after="\$(git rev-parse HEAD)"
+        if [ "\$before" = "\$after" ]; then
+          restore_stash
+          printf '%s PakForge is already up to date.\n' "\$now" >> "\$UPDATE_LOG"
+          printf '{"state":"current","time":"%s","message":"origin/main is already installed; local changes were restored."}\n' "\$now" > "\$UPDATE_STATUS"
+        else
+          printf '%s PakForge updated from origin/main.\n' "\$now" >> "\$UPDATE_LOG"
+          if [ "\$dirty" = "1" ]; then
+            printf '%s Local changes remain safely saved in git stash as %s.\n' "\$now" "\$stash_name" >> "\$UPDATE_LOG"
+          fi
+          printf '{"state":"updated","time":"%s","message":"Latest origin/main downloaded; local changes are preserved in git stash."}\n' "\$now" > "\$UPDATE_STATUS"
+          SKIP_PACKAGES=1 PAKFORGE_DEFER_SETUP=1 bash "\$SCRIPT_DIR/install-termux.sh" >> "\$UPDATE_LOG" 2>&1 || true
+        fi
       else
-        printf '%s PakForge update skipped: fast-forward unavailable.\n' "\$now" >> "\$UPDATE_LOG"
-        printf '{"state":"skipped","time":"%s","message":"Fast-forward unavailable; current version was kept."}\n' "\$now" > "\$UPDATE_STATUS"
+        backup_branch="pakforge-local-backup-\$(date +%Y%m%d-%H%M%S)"
+        if git branch "\$backup_branch" "\$before" >/dev/null 2>&1 && git reset --hard origin/main >/dev/null 2>&1; then
+          printf '%s PakForge reset to origin/main; previous local commits are preserved in branch %s.\n' "\$now" "\$backup_branch" >> "\$UPDATE_LOG"
+          if [ "\$dirty" = "1" ]; then
+            printf '%s Local uncommitted changes remain safely saved in git stash as %s.\n' "\$now" "\$stash_name" >> "\$UPDATE_LOG"
+          fi
+          printf '{"state":"updated","time":"%s","message":"Latest origin/main installed; local commits are preserved in %s and local edits in git stash."}\n' "\$now" "\$backup_branch" > "\$UPDATE_STATUS"
+          SKIP_PACKAGES=1 PAKFORGE_DEFER_SETUP=1 bash "\$SCRIPT_DIR/install-termux.sh" >> "\$UPDATE_LOG" 2>&1 || true
+        else
+          restore_stash
+          printf '%s PakForge update skipped: unable to synchronize origin/main safely.\n' "\$now" >> "\$UPDATE_LOG"
+          printf '{"state":"skipped","time":"%s","message":"Local work was preserved; origin/main could not be synchronized safely."}\n' "\$now" > "\$UPDATE_STATUS"
+        fi
       fi
     ) >/dev/null 2>&1 &
   else
