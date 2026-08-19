@@ -69,7 +69,11 @@ def main() -> None:
             check=False,
         )
         assert setup_status.returncode == 0
-        assert json.loads(setup_status.stdout)["state"] in {"incomplete", "ready"}
+        setup_payload = json.loads(setup_status.stdout)
+        assert setup_payload["state"] in {"incomplete", "ready"}
+        assert setup_payload["percent"] == 0
+        assert setup_payload["remaining_percent"] == 100
+        assert setup_payload["stage_total"] == 4
     patch_parsed = pakforge.parser().parse_args(["repack", "source.pak", "edited", "out.pak", "--patch", "--verify"])
     assert patch_parsed.patch is True
     assert patch_parsed.verify is True

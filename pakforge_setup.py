@@ -28,6 +28,8 @@ MODULES = {
     "zstandard": "zstandard",
 }
 
+SETUP_STAGE_TOTAL = 4
+
 
 def _status() -> dict:
     return {
@@ -45,8 +47,25 @@ def _status() -> dict:
 def _write_status(state: str, **extra: object) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     payload = _status()
+    if "percent" not in extra:
+        extra["percent"] = 100 if state == "ready" else 0
+    extra["remaining_percent"] = max(0, 100 - int(extra["percent"]))
+    extra.setdefault("stage", "Complete" if state == "ready" else "Starting")
+    extra.setdefault("stage_index", SETUP_STAGE_TOTAL if state == "ready" else 0)
+    extra.setdefault("stage_total", SETUP_STAGE_TOTAL)
     payload.update({"state": state, "updated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **extra})
     STATUS_FILE.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def _progress(stage_index: int, stage: str, message: str, percent: int) -> None:
+    _write_status(
+        "running",
+        stage=stage,
+        stage_index=stage_index,
+        stage_total=SETUP_STAGE_TOTAL,
+        percent=max(0, min(99, percent)),
+        message=message,
+    )
 
 
 def _log(message: str) -> None:
@@ -95,8 +114,9 @@ def _link_repak() -> None:
 
 
 def perform_setup() -> int:
-    _write_status("running")
+    _progress(0, "Starting background setup", "Checking required dependencies", 0)
     package = _package_command()
+    _progress(1, "Installing system packages", "Preparing official package-manager dependencies", 10)
     if package is not None:
         _log(f"Using official package manager: {package[0]}")
         if not _run(package[0], package[1]):
@@ -105,12 +125,14 @@ def perform_setup() -> int:
         _log("WARN no supported package manager detected")
 
     missing = [name for name, module in MODULES.items() if importlib.util.find_spec(module) is None]
+    _progress(2, "Installing Python dependencies", "Checking rich, pytz, gmalg, Crypto, and zstandard", 35)
     if missing:
         pip_command = [sys.executable, "-m", "pip", "install", "--upgrade", "rich", "pytz", "gmalg", "pycryptodome", "zstandard"]
         if not _run("Python dependencies", pip_command):
-            _write_status("failed", error="Python dependency installation failed", missing=missing)
+            _write_status("failed", error="Python dependency installation failed", missing=missing, stage="Python dependency installation failed", stage_index=2, stage_total=SETUP_STAGE_TOTAL, percent=35)
             return 2
 
+    _progress(3, "Installing optional tools", "Preparing Lua 5.1 and repak", 70)
     if shutil.which("repak") is None and shutil.which("cargo") is not None:
         cargo_command = [
             "cargo", "install", "--git", "https://github.com/trumank/repak",
@@ -122,15 +144,26 @@ def perform_setup() -> int:
 
     final = _status()
     if not all(final["modules"].values()):
-        _write_status("failed", error="Required Python modules are still missing", missing=final["modules"])
+        _write_status("failed", error="Required Python modules are still missing", missing=final["modules"], stage="Required dependencies missing", stage_index=3, stage_total=SETUP_STAGE_TOTAL, percent=70)
         return 2
-    _write_status("ready", message="PakForge background setup completed")
+    _write_status("ready", message="PakForge background setup completed", stage="Setup complete", stage_index=SETUP_STAGE_TOTAL, stage_total=SETUP_STAGE_TOTAL, percent=100)
     return 0
 
 
 def main(argv: list[str]) -> int:
     if argv[:1] == ["--status"] or argv[:1] == ["status"]:
-        print(json.dumps(_status() if not STATUS_FILE.exists() else json.loads(STATUS_FILE.read_text(encoding="utf-8")), indent=2))
+        if STATUS_FILE.exists():
+            payload = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+        else:
+            payload = _status()
+            payload.update({
+                "stage": "Waiting to start",
+                "stage_index": 0,
+                "stage_total": SETUP_STAGE_TOTAL,
+                "percent": 0,
+                "remaining_percent": 100,
+            })
+        print(json.dumps(payload, indent=2))
         return 0
     if argv[:1] not in (["--background"], ["background"]):
         print(f"Setup log: {LOG_FILE}")
@@ -149,4 +182,3 @@ def main(argv: list[str]) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
-
