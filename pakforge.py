@@ -38,7 +38,7 @@ except ImportError as exc:
     ) from exc
 
 APP_NAME = "PakForge"
-VERSION = "1.3.2"
+VERSION = "1.3.3"
 MANIFEST_NAME = ".pakforge-manifest.json"
 CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "pakforge"
 PROFILE_DIRECTORY = CONFIG_HOME / "profiles"
@@ -643,6 +643,113 @@ def info_command(args: argparse.Namespace) -> None:
         print(f"Inventory exported: {export}")
 
 
+def find_unluac_decompiler() -> Path | None:
+    """Find the optional patched unluac JAR in SOURCE or the system PATH.
+
+    PakForge never downloads a decompiler automatically. Keeping the JAR
+    optional preserves ordinary unpacking when Java or unluac is unavailable.
+    """
+    configured = os.environ.get("PAKFORGE_UNLUAC_JAR")
+    candidates: list[Path] = []
+    if configured:
+        candidates.append(Path(configured).expanduser())
+    project_root = Path(__file__).resolve().parent
+    candidates.extend((project_root / "SOURCE" / "unluac_patched.jar", project_root / "unluac_patched.jar"))
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+
+    for path_entry in os.environ.get("PATH", "").split(os.pathsep):
+        if path_entry:
+            candidate = Path(path_entry) / "unluac_patched.jar"
+            if candidate.is_file():
+                return candidate.resolve()
+    return None
+
+
+def normalize_tencent_lua_bytecode(data: bytes) -> bytes:
+    """Normalize Tencent's optional post-header nibble obfuscation.
+
+    The first 34 bytes are retained exactly. When byte index 33 is greater
+    than 2, only the remaining payload bytes are nibble-swapped. The original
+    extracted `.luac` is never overwritten.
+    """
+    if len(data) <= 33 or data[33] <= 2:
+        return data
+    normalized = bytearray(data)
+    for index in range(34, len(normalized)):
+        value = normalized[index]
+        normalized[index] = ((value & 0x0F) << 4) | ((value & 0xF0) >> 4)
+    return bytes(normalized)
+
+
+def _decompile_luac_file(luac_path: Path, decompiler: Path, timeout: float = 30.0) -> tuple[bool, str]:
+    """Decompile one extracted `.luac` file without changing the source file."""
+    if shutil.which("java") is None:
+        return False, "Java runtime not found"
+    lua_output = luac_path.with_suffix(".lua")
+    staged_path: Path | None = None
+    try:
+        normalized_data = normalize_tencent_lua_bytecode(luac_path.read_bytes())
+        with tempfile.NamedTemporaryFile(prefix="pakforge-lua-", suffix=".luac", delete=False) as staged:
+            staged.write(normalized_data)
+            staged_path = Path(staged.name)
+        with lua_output.open("w", encoding="utf-8", newline="") as output_handle:
+            completed = subprocess.run(
+                ["java", "-jar", str(decompiler), str(staged_path)],
+                stdout=output_handle,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+                timeout=timeout,
+            )
+    except subprocess.TimeoutExpired:
+        lua_output.unlink(missing_ok=True)
+        return False, f"decompiler timed out after {timeout:g}s"
+    except (OSError, UnicodeError) as exc:
+        lua_output.unlink(missing_ok=True)
+        return False, str(exc)
+    finally:
+        if staged_path is not None:
+            staged_path.unlink(missing_ok=True)
+
+    if completed.returncode != 0:
+        lua_output.unlink(missing_ok=True)
+        detail = (completed.stderr or "unknown unluac error").strip()
+        return False, f"unluac exited with status {completed.returncode}: {detail}"
+    return True, str(lua_output)
+
+
+def decompile_extracted_lua(output_root: Path, timeout: float = 30.0) -> dict[str, int]:
+    """Create `.lua` siblings for extracted `.luac` files when unluac is available."""
+    luac_files = sorted(path for path in output_root.rglob("*") if path.is_file() and path.suffix.lower() == ".luac")
+    result = {"found": len(luac_files), "decompiled": 0, "fallback": 0}
+    if not luac_files:
+        print("[PakForge] [INFO] No .luac files found; decompilation skipped.")
+        return result
+
+    decompiler = find_unluac_decompiler()
+    if decompiler is None:
+        print("[PakForge] [WARN] unluac_patched.jar not found in SOURCE or PATH; keeping raw .luac files.", file=sys.stderr)
+        result["fallback"] = len(luac_files)
+        return result
+    if shutil.which("java") is None:
+        print("[PakForge] [WARN] Java runtime not found; keeping raw .luac files.", file=sys.stderr)
+        result["fallback"] = len(luac_files)
+        return result
+
+    print(f"[PakForge] [INFO] Decompiling {len(luac_files)} Lua bytecode file(s) with {decompiler}...")
+    for luac_path in luac_files:
+        success, detail = _decompile_luac_file(luac_path, decompiler, timeout=timeout)
+        if success:
+            result["decompiled"] += 1
+            print(f"[PakForge] [OK] Decompiled: {detail}")
+        else:
+            result["fallback"] += 1
+            print(f"[PakForge] [WARN] Kept raw bytecode for {luac_path}: {detail}", file=sys.stderr)
+    return result
+
+
 def unpack_command(args: argparse.Namespace) -> None:
     pak_path = require_file(args.pak, "PAK")
     output = Path(args.output).expanduser() if args.output else pak_path.with_name(pak_path.stem + "-unpacked")
@@ -652,11 +759,20 @@ def unpack_command(args: argparse.Namespace) -> None:
         raise SystemExit(f"Output directory is not empty: {output}. Use --overwrite only after keeping a backup.")
     pak, _, _ = open_pak_auto(pak_path, args.is_od)
     pak.dump(output)
+    decompile_result = None
+    if getattr(args, "decompile_lua", False):
+        decompile_result = decompile_extracted_lua(output)
     log_path = output / f"Debug_{pak_path.stem}.log"
     dump_unpacking_log(pak, log_path)
     print(f"Extracted to: {output}")
     print(f"Debug log: {log_path}")
     print(f"Manifest: {create_manifest(output)}")
+    if decompile_result is not None:
+        print(
+            "Lua decompilation: "
+            f"{decompile_result['decompiled']} succeeded, "
+            f"{decompile_result['fallback']} kept as raw .luac"
+        )
 
 
 def batch_command(args: argparse.Namespace) -> None:
@@ -671,7 +787,13 @@ def batch_command(args: argparse.Namespace) -> None:
         if target.exists() and any(target.iterdir()) and not args.overwrite:
             print(f"Skipped existing output: {target}")
             continue
-        child = argparse.Namespace(pak=str(pak), output=str(target), is_od=args.is_od, overwrite=args.overwrite)
+        child = argparse.Namespace(
+            pak=str(pak),
+            output=str(target),
+            is_od=args.is_od,
+            overwrite=args.overwrite,
+            decompile_lua=getattr(args, "decompile_lua", False),
+        )
         try:
             unpack_command(child)
             completed += 1
@@ -943,6 +1065,11 @@ def parser() -> argparse.ArgumentParser:
     unpack.add_argument("output", nargs="?")
     unpack.add_argument("--overwrite", action="store_true")
     unpack.add_argument("--is-od", action="store_true")
+    unpack.add_argument(
+        "--decompile-lua",
+        action="store_true",
+        help="create readable .lua siblings for extracted .luac files when unluac_patched.jar is available",
+    )
     unpack.set_defaults(func=unpack_command)
 
     batch = sub.add_parser("batch-unpack", help="extract every .pak in a directory")
@@ -950,6 +1077,11 @@ def parser() -> argparse.ArgumentParser:
     batch.add_argument("output_dir")
     batch.add_argument("--overwrite", action="store_true")
     batch.add_argument("--is-od", action="store_true")
+    batch.add_argument(
+        "--decompile-lua",
+        action="store_true",
+        help="decompile extracted .luac files when unluac_patched.jar is available",
+    )
     batch.set_defaults(func=batch_command)
 
     repack = sub.add_parser("repack", help="repack edited files using a source PAK")

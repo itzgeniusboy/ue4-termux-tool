@@ -132,9 +132,42 @@ def main() -> None:
         else:
             raise AssertionError("unknown package-manager host did not fail gracefully")
 
+    plain = bytes(range(40))
+    assert pakforge.normalize_tencent_lua_bytecode(plain[:33] + b"\x02" + plain[34:]) == plain[:33] + b"\x02" + plain[34:]
+    obfuscated = plain[:33] + b"\x03" + bytes((0xA5, 0x10, 0xF2))
+    assert pakforge.normalize_tencent_lua_bytecode(obfuscated) == plain[:33] + b"\x03" + bytes((0x5A, 0x01, 0x2F))
+
+    with tempfile.TemporaryDirectory(prefix="pakforge-unluac-") as decomp_root:
+        root = Path(decomp_root)
+        luac = root / "Content" / "Lua" / "demo.luac"
+        luac.parent.mkdir(parents=True)
+        luac.write_bytes(obfuscated)
+        jar = root / "unluac_patched.jar"
+        jar.write_bytes(b"test jar placeholder")
+        with patch.object(pakforge.shutil, "which", return_value="/usr/bin/java") as java_which, patch.object(
+            pakforge.subprocess,
+            "run",
+        ) as java_run:
+            def fake_java(command, **kwargs):
+                assert command[:3] == ["java", "-jar", str(jar)]
+                assert Path(command[3]).read_bytes() == pakforge.normalize_tencent_lua_bytecode(obfuscated)
+                kwargs["stdout"].write("-- decompiled source\n")
+                return subprocess.CompletedProcess(command, 0, stderr="")
+            java_run.side_effect = fake_java
+            ok, output_path = pakforge._decompile_luac_file(luac, jar)
+            assert ok is True
+            assert Path(output_path).read_text(encoding="utf-8") == "-- decompiled source\n"
+            assert luac.read_bytes() == obfuscated
+            java_which.assert_called_once_with("java")
+
+        with patch.object(pakforge, "find_unluac_decompiler", return_value=None):
+            result = pakforge.decompile_extracted_lua(root)
+            assert result == {"found": 1, "decompiled": 0, "fallback": 1}
+            assert luac.is_file()
+
     version = run("--version")
     assert version.returncode == 0
-    assert version.stdout.strip() == "PakForge 1.3.2"
+    assert version.stdout.strip() == "PakForge 1.3.3"
 
     with tempfile.TemporaryDirectory(prefix="pakforge-test-") as raw:
         root = Path(raw)

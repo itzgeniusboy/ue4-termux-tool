@@ -149,12 +149,18 @@ pakforge repack /sdcard/Download/game.pak \
 # Process multiple PAK files.
 pakforge batch-unpack /sdcard/Download/paks /sdcard/Download/unpacked
 
+# Optionally create readable .lua siblings for extracted .luac files.
+pakforge unpack /sdcard/Download/game.pak /sdcard/Download/game-unpacked --decompile-lua
+pakforge batch-unpack /sdcard/Download/paks /sdcard/Download/unpacked --decompile-lua
+
 # Create and verify an edited-directory manifest.
 pakforge manifest /sdcard/Download/game-unpacked
 pakforge verify /sdcard/Download/game-unpacked
 ```
 
 The `--target-prefix` value must be a relative PAK directory; parent traversal is rejected. PakForge refuses to replace an existing output by default. Use `--overwrite` only after keeping a separate copy of important data. The `--is-od` option is available for OD/custom PAK handling. The original `tool` command remains available for repak-based `unpack`, `repack`, `inject`, `info`, `batch-unpack`, `manifest`, and `verify` workflows.
+
+The optional `--decompile-lua` flag searches for `unluac_patched.jar` in the repository `SOURCE` directory, beside `pakforge.py`, or the system `PATH`. Java must also be available. Each extracted `.luac` remains unchanged; PakForge writes the decompiler output as a `.lua` sibling. For Tencent-style bytecode, the first 34 bytes are preserved and the remaining bytes are nibble-swapped only when byte index 33 is greater than 2, using a temporary staging copy. Decompilation is limited to 30 seconds per file. If the JAR, Java, or a valid decompilation result is unavailable, PakForge keeps the raw `.luac` and continues unpacking.
 
 ## Structured bug logs
 
