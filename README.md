@@ -2,7 +2,7 @@
 
 A beginner-friendly Termux toolkit for authorized Unreal Engine 4 projects. **PakForge** is the primary Tencent/UE PAK parser and repacking utility bundled in this repository. The original `tool` command remains available as a repak-based compatibility wrapper for standard UE4 workflows.
 
-PakForge supports direct PAK inspection, extraction, block-aware repacking, batch extraction, and SHA-256 manifests. The project does not bypass DRM, defeat anti-cheat, recover unknown encryption keys, or modify third-party online games. Use it only with your own project files or with explicit permission.
+PakForge supports direct PAK inspection, extraction, block-aware repacking, batch extraction, SHA-256 manifests, developer profiles, preflight checks, asset diffs, and reproducible build reports. The project does not bypass DRM, defeat anti-cheat, recover unknown encryption keys, or modify third-party online games. Use it only with your own project files or with explicit permission.
 
 ## Core commands
 
@@ -15,6 +15,10 @@ PakForge supports direct PAK inspection, extraction, block-aware repacking, batc
 | `pakforge batch-unpack` | Extract every `.pak` file in a directory. |
 | `pakforge manifest` | Create a SHA-256 manifest for an unpacked or edited directory. |
 | `pakforge verify` | Detect missing, changed, or extra files against a manifest. |
+| `pakforge profile` | Save and reuse project-specific PAK/Lua build settings. |
+| `pakforge doctor` | Preflight-check a PAK, dependencies, parser mode, and storage. |
+| `pakforge diff` | Compare two asset directories and create a JSON change report. |
+| `pakforge build` | Run a profile-driven preflight, Lua build, backup, and verification workflow. |
 | `tool logs` | List structured operation logs and show the latest log tail. |
 | `tool unpack/repack/inject` | Existing repak-based compatibility workflows. |
 
@@ -208,7 +212,48 @@ pakforge lua-pipeline \
   --dry-run
 ```
 
-The pipeline automatically reports when the PAK is invalid or unsupported and writes a JSON report after a verified repack. Use `--is-od` when the project is known to require OD parsing.
+The pipeline automatically reports when the PAK is invalid or unsupported and writes a JSON report after a verified repack. Use `--is-od` when the project is known to require OD parsing. Add `--backup` when replacing an existing output so PakForge can restore it if repacking or verification fails.
+
+## Developer build workflow
+
+Profiles keep project-specific paths and parser settings out of long command lines. Create one profile, review it, and reuse it for repeatable debug or release builds:
+
+```bash
+pakforge profile init debug \
+  --pak /sdcard/Download/game.pak \
+  --lua-dir /sdcard/Download/MyLua \
+  --output /sdcard/Download/game-debug.pak \
+  --target-prefix Content/Lua/Mods
+
+pakforge profile list
+pakforge profile show debug
+```
+
+Run a preflight check before building. It reports parser mode, PAK readability, dependencies, available storage, and supported capabilities:
+
+```bash
+pakforge doctor /sdcard/Download/game.pak
+pakforge doctor /sdcard/Download/game.pak --json
+```
+
+Compare two unpacked asset trees before deciding what to package:
+
+```bash
+pakforge diff /sdcard/Download/old-assets /sdcard/Download/new-assets
+pakforge diff /sdcard/Download/old-assets /sdcard/Download/new-assets --output /sdcard/Download/asset-diff.json
+```
+
+Run the repeatable developer build. It performs preflight, Lua discovery, target-prefix injection, verification, timestamped backup when replacing an output, rollback on failure, and a JSON build report:
+
+```bash
+pakforge build --profile debug --overwrite
+```
+
+Use a dry run to create the plan and report without writing the output PAK:
+
+```bash
+pakforge build --profile debug --dry-run
+```
 
 The shortest command forms are:
 
@@ -294,21 +339,11 @@ tool inject encrypted-project.pak lua-folder project-with-lua.pak \
 
 The tool reads the source PAK, copies Lua files into temporary staging, and creates a new output PAK. It does not create encrypted output.
 
-## No automatic backup files
+## Backup behavior
 
-As requested, this tool does **not** create backup files. By default it refuses to overwrite the input PAK, which is the safer option:
+Native PakForge developer builds remain conservative by default: they refuse to replace an existing output unless `--overwrite` is supplied. When replacing an output, `pakforge build` enables a timestamped backup by default and restores it if repacking or post-build verification fails. Use `--no-backup` only when the project workflow already manages its own artifacts.
 
-```bash
-tool inject game.pak lua-folder game-with-lua.pak
-```
-
-If you deliberately want to replace the original PAK, use `--in-place`. This replaces the original directly and creates **no backup**:
-
-```bash
-tool inject game.pak lua-folder game.pak --in-place
-```
-
-Always keep your own copy if the original file is important.
+The legacy `tool` wrapper retains its existing no-automatic-backup behavior. If you deliberately use `tool inject --in-place`, keep your own copy of important project files.
 
 ## Useful options
 

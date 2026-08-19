@@ -11,7 +11,10 @@ import argparse
 import hashlib
 import json
 import os
+import importlib.util
+import platform
 import re
+import shutil
 import sys
 import time
 import traceback
@@ -32,8 +35,10 @@ except ImportError as exc:
     ) from exc
 
 APP_NAME = "PakForge"
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 MANIFEST_NAME = ".pakforge-manifest.json"
+CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "pakforge"
+PROFILE_DIRECTORY = CONFIG_HOME / "profiles"
 
 
 def native_log_directory() -> Path:
@@ -197,6 +202,185 @@ def verify_command(args: argparse.Namespace) -> None:
     raise SystemExit(2)
 
 
+def _profile_name(value: str) -> str:
+    name = value.strip()
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", name):
+        raise SystemExit("Profile name must contain only letters, numbers, dot, underscore, or hyphen.")
+    return name
+
+
+def profile_path(name: str) -> Path:
+    return PROFILE_DIRECTORY / f"{_profile_name(name)}.json"
+
+
+def load_profile(name: str) -> dict:
+    path = profile_path(name)
+    if not path.is_file():
+        raise SystemExit(f"Profile not found: {name}. Use: pakforge profile list")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"Profile could not be read: {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise SystemExit(f"Profile is not a JSON object: {path}")
+    return payload
+
+
+def profile_command(args: argparse.Namespace) -> None:
+    PROFILE_DIRECTORY.mkdir(parents=True, exist_ok=True)
+    if args.profile_action == "list":
+        profiles = sorted(path.stem for path in PROFILE_DIRECTORY.glob("*.json"))
+        print("No profiles found." if not profiles else "Profiles:\n" + "\n".join(f"- {name}" for name in profiles))
+        return
+    if args.profile_action == "delete":
+        path = profile_path(args.name)
+        if not path.is_file():
+            raise SystemExit(f"Profile not found: {args.name}")
+        path.unlink()
+        print(f"Deleted profile: {args.name}")
+        return
+    if args.profile_action == "show":
+        payload = load_profile(args.name)
+        print(json.dumps(payload, indent=2))
+        return
+    if args.profile_action == "init":
+        path = profile_path(args.name)
+        if path.exists() and not args.overwrite:
+            raise SystemExit(f"Profile already exists: {path}. Use --overwrite to replace it.")
+        payload = {
+            "format": 1,
+            "tool": APP_NAME,
+            "version": VERSION,
+            "name": args.name,
+            "pak": args.pak or "",
+            "lua_dir": args.lua_dir or "",
+            "output": args.output or "",
+            "target_prefix": args.target_prefix or "Script",
+            "is_od": bool(args.is_od),
+            "backup": not args.no_backup,
+        }
+        path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        print(f"Profile created: {path}")
+        return
+    raise SystemExit(f"Unknown profile action: {args.profile_action}")
+
+
+def _package_status() -> dict[str, bool]:
+    modules = {"rich": "rich", "pytz": "pytz", "gmalg": "gmalg", "pycryptodome": "Crypto", "zstandard": "zstandard"}
+    return {label: importlib.util.find_spec(module) is not None for label, module in modules.items()}
+
+
+def doctor_command(args: argparse.Namespace) -> None:
+    path = require_file(args.pak, "PAK")
+    free_bytes = shutil.disk_usage(path.parent).free
+    packages = _package_status()
+    issues: list[str] = []
+    if path.stat().st_size == 0:
+        issues.append("PAK file is empty")
+    missing = [name for name, present in packages.items() if not present]
+    if missing:
+        issues.append("Missing Python dependencies: " + ", ".join(missing))
+    if free_bytes < 256 * 1024 * 1024:
+        issues.append("Less than 256 MiB free beside the source PAK")
+    payload: dict[str, object] = {
+        "status": "ready",
+        "tool": APP_NAME,
+        "version": VERSION,
+        "platform": platform.platform(),
+        "python": platform.python_version(),
+        "termux": bool(os.environ.get("PREFIX")),
+        "pak": str(path),
+        "pak_size": path.stat().st_size,
+        "free_bytes": free_bytes,
+        "dependencies": packages,
+        "issues": issues,
+    }
+    try:
+        pak, is_od, attempts = open_pak_auto(path, args.is_od)
+        payload["parser_mode"] = "od" if is_od else "standard"
+        payload["capabilities"] = capability_payload(path, pak, is_od)["capabilities"]
+        payload["attempts"] = attempts
+    except SystemExit as exc:
+        issues.append(str(exc))
+        payload["status"] = "attention_required"
+        payload["parser_error"] = str(exc)
+    if issues:
+        payload["status"] = "attention_required"
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(f"Doctor status: {payload['status']}")
+        print(f"PAK: {path}")
+        print(f"Size: {payload['pak_size']:,} bytes")
+        print(f"Free space: {free_bytes:,} bytes")
+        print(f"Parser: {payload.get('parser_mode', 'unavailable')}")
+        print("Dependencies: " + ", ".join(f"{name}={'ok' if present else 'missing'}" for name, present in packages.items()))
+        if issues:
+            print("Issues:")
+            for issue in issues:
+                print(f"- {issue}")
+    if issues:
+        raise SystemExit(2)
+
+
+def directory_snapshot(root: Path) -> dict[str, dict[str, object]]:
+    root = require_dir(root, "Directory").resolve()
+    return {
+        path.relative_to(root).as_posix(): {"size": path.stat().st_size, "sha256": sha256_file(path)}
+        for path in regular_files(root)
+    }
+
+
+def diff_directories(old: Path, new: Path) -> dict:
+    before = directory_snapshot(old)
+    after = directory_snapshot(new)
+    added = sorted(set(after) - set(before))
+    removed = sorted(set(before) - set(after))
+    changed = sorted(relative for relative in set(before) & set(after) if before[relative] != after[relative])
+    return {
+        "format": 1,
+        "tool": APP_NAME,
+        "old": str(Path(old).expanduser()),
+        "new": str(Path(new).expanduser()),
+        "summary": {"added": len(added), "removed": len(removed), "changed": len(changed), "unchanged": len(before) - len(changed) - len(removed)},
+        "added": added,
+        "removed": removed,
+        "changed": changed,
+    }
+
+
+def diff_command(args: argparse.Namespace) -> None:
+    payload = diff_directories(Path(args.old_dir), Path(args.new_dir))
+    if args.output:
+        output = Path(args.output).expanduser()
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        summary = payload["summary"]
+        print(f"Added: {summary['added']}")
+        print(f"Removed: {summary['removed']}")
+        print(f"Changed: {summary['changed']}")
+        for label in ("added", "removed", "changed"):
+            items = payload[label]
+            if items:
+                print(f"\n{label.title()} files:")
+                for item in items:
+                    print(f"  {item}")
+    if args.output:
+        print(f"Diff report: {Path(args.output).expanduser()}")
+
+
+def backup_file(path: Path) -> Path | None:
+    if not path.is_file():
+        return None
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    backup = path.with_name(f"{path.name}.bak-{stamp}")
+    shutil.copy2(path, backup)
+    return backup
+
+
 def inventory(pak: TencentPakFile) -> list[dict]:
     rows = []
     for directory, files in pak._index.items():
@@ -316,6 +500,7 @@ def lua_pipeline_command(args: argparse.Namespace) -> None:
         "parser_mode": "od" if is_od else "standard",
         "attempts": attempts,
         "dry_run": bool(args.dry_run),
+        "backup_requested": bool(getattr(args, "backup", False)),
     }
     if args.dry_run:
         report_path = Path(args.report).expanduser() if args.report else output.with_suffix(output.suffix + ".plan.json")
@@ -326,16 +511,30 @@ def lua_pipeline_command(args: argparse.Namespace) -> None:
         print(f"Plan: {report_path}")
         return
     output.parent.mkdir(parents=True, exist_ok=True)
-    count = repack_pak_file_full(pak, lua_root, output, target_path=target_prefix, force_add=True)
-    if count <= 0:
-        raise SystemExit("Lua pipeline produced no files.")
-    verified = TencentPakFile(output, is_od=is_od)
+    backup = backup_file(output) if getattr(args, "backup", False) else None
+    report["backup"] = str(backup) if backup else None
+    try:
+        count = repack_pak_file_full(pak, lua_root, output, target_path=target_prefix, force_add=True)
+        if count <= 0:
+            raise SystemExit("Lua pipeline produced no files.")
+        verified, verified_od, _ = open_pak_auto(output, is_od)
+    except (Exception, SystemExit):
+        if backup and backup.is_file():
+            if output.exists():
+                output.unlink()
+            backup.replace(output)
+        raise
     verified_paths = {row["path"] for row in inventory(verified)}
     expected = {f"{target_prefix}/{relative}" for relative in report["lua_files"]}
     missing = sorted(expected - verified_paths)
     if missing:
+        if backup and backup.is_file():
+            if output.exists():
+                output.unlink()
+            backup.replace(output)
         raise SystemExit("Post-repack verification failed; missing Lua paths: " + ", ".join(missing[:10]))
     report["status"] = "verified"
+    report["verified_parser_mode"] = "od" if verified_od else "standard"
     report["injected_count"] = count
     report["verified_count"] = len(expected)
     report_path = Path(args.report).expanduser() if args.report else output.with_suffix(output.suffix + ".lua-report.json")
@@ -344,6 +543,44 @@ def lua_pipeline_command(args: argparse.Namespace) -> None:
     print(f"Lua pipeline complete: {count} file(s) added under {target_prefix}")
     print(f"Verified output: {output}")
     print(f"Report: {report_path}")
+
+
+def build_command(args: argparse.Namespace) -> None:
+    profile = load_profile(args.profile)
+    pak_value = args.pak or profile.get("pak")
+    lua_value = args.lua_dir or profile.get("lua_dir")
+    output_value = args.output or profile.get("output")
+    if not pak_value or not lua_value or not output_value:
+        raise SystemExit("Build profile needs pak, lua_dir, and output. Set them with `pakforge profile init` or pass command options.")
+    pak_path = Path(str(pak_value)).expanduser()
+    lua_dir = Path(str(lua_value)).expanduser()
+    output = Path(str(output_value)).expanduser()
+    doctor_args = argparse.Namespace(pak=str(pak_path), is_od=args.is_od or bool(profile.get("is_od", False)), json=False)
+    doctor_command(doctor_args)
+    target_prefix = args.target_prefix or profile.get("target_prefix") or "Script"
+    report = Path(args.report).expanduser() if args.report else output.with_suffix(output.suffix + ".build-report.json")
+    backup_enabled = not args.no_backup and bool(profile.get("backup", True))
+    lua_args = argparse.Namespace(
+        pak=str(pak_path),
+        lua_dir=str(lua_dir),
+        output=str(output),
+        target_prefix=str(target_prefix),
+        report=str(report),
+        dry_run=args.dry_run,
+        verify=True,
+        overwrite=args.overwrite,
+        is_od=doctor_args.is_od,
+        backup=backup_enabled,
+    )
+    lua_pipeline_command(lua_args)
+    if report.is_file():
+        payload = json.loads(report.read_text(encoding="utf-8"))
+        payload["workflow"] = "developer-build"
+        payload["profile"] = args.profile
+        payload["preflight"] = "passed"
+        payload["backup_enabled"] = backup_enabled
+        report.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        print(f"Build report: {report}")
 
 
 def info_command(args: argparse.Namespace) -> None:
@@ -462,6 +699,37 @@ def parser() -> argparse.ArgumentParser:
     sub = cli.add_subparsers(dest="command")
     sub.add_parser("menu", help="open the original interactive PAK menu")
 
+    profile = sub.add_parser("profile", help="create and manage reusable developer build profiles")
+    profile_actions = profile.add_subparsers(dest="profile_action", required=True)
+    profile_init = profile_actions.add_parser("init", help="create a profile")
+    profile_init.add_argument("name")
+    profile_init.add_argument("--pak")
+    profile_init.add_argument("--lua-dir")
+    profile_init.add_argument("--output")
+    profile_init.add_argument("--target-prefix")
+    profile_init.add_argument("--is-od", action="store_true")
+    profile_init.add_argument("--no-backup", action="store_true")
+    profile_init.add_argument("--overwrite", action="store_true")
+    profile_actions.add_parser("list", help="list profiles")
+    profile_show = profile_actions.add_parser("show", help="show a profile")
+    profile_show.add_argument("name")
+    profile_delete = profile_actions.add_parser("delete", help="delete a profile")
+    profile_delete.add_argument("name")
+    profile.set_defaults(func=profile_command)
+
+    doctor = sub.add_parser("doctor", help="preflight-check a PAK and local build environment")
+    doctor.add_argument("pak")
+    doctor.add_argument("--json", action="store_true")
+    doctor.add_argument("--is-od", action="store_true")
+    doctor.set_defaults(func=doctor_command)
+
+    diff = sub.add_parser("diff", help="compare two edited asset directories")
+    diff.add_argument("old_dir")
+    diff.add_argument("new_dir")
+    diff.add_argument("--output")
+    diff.add_argument("--json", action="store_true")
+    diff.set_defaults(func=diff_command)
+
     detect = sub.add_parser("detect", help="detect PAK mode and report supported capabilities")
     detect.add_argument("pak")
     detect.add_argument("--json", action="store_true")
@@ -476,9 +744,23 @@ def parser() -> argparse.ArgumentParser:
     lua.add_argument("--report")
     lua.add_argument("--dry-run", action="store_true")
     lua.add_argument("--verify", action="store_true", help="verify the repacked PAK (verification is enabled by default)")
+    lua.add_argument("--backup", action="store_true", help="backup an existing output and restore it if the workflow fails")
     lua.add_argument("--overwrite", action="store_true")
     lua.add_argument("--is-od", action="store_true")
     lua.set_defaults(func=lua_pipeline_command)
+
+    build = sub.add_parser("build", help="run a profile-driven preflight and Lua build")
+    build.add_argument("--profile", required=True)
+    build.add_argument("--pak")
+    build.add_argument("--lua-dir")
+    build.add_argument("--output")
+    build.add_argument("--target-prefix")
+    build.add_argument("--report")
+    build.add_argument("--dry-run", action="store_true")
+    build.add_argument("--overwrite", action="store_true")
+    build.add_argument("--no-backup", action="store_true")
+    build.add_argument("--is-od", action="store_true")
+    build.set_defaults(func=build_command)
 
     info = sub.add_parser("info", help="inspect entries, compression, encryption, and sizes")
     info.add_argument("pak")

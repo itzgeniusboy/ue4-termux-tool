@@ -43,7 +43,7 @@ def main() -> None:
 
     version = run("--version")
     assert version.returncode == 0
-    assert version.stdout.strip() == "PakForge 1.2.0"
+    assert version.stdout.strip() == "PakForge 1.3.0"
 
     with tempfile.TemporaryDirectory(prefix="pakforge-test-") as raw:
         root = Path(raw)
@@ -65,6 +65,28 @@ def main() -> None:
         tampered = run("verify", str(root))
         assert tampered.returncode == 2
         assert "CHANGED" in tampered.stdout
+
+        old_dir = root / "old-build"
+        new_dir = root / "new-build"
+        old_dir.mkdir()
+        new_dir.mkdir()
+        (old_dir / "keep.lua").write_text("return 1\n", encoding="utf-8")
+        (old_dir / "removed.lua").write_text("return 2\n", encoding="utf-8")
+        (new_dir / "keep.lua").write_text("return 3\n", encoding="utf-8")
+        (new_dir / "added.lua").write_text("return 4\n", encoding="utf-8")
+        diffed = run("diff", str(old_dir), str(new_dir), "--json")
+        assert diffed.returncode == 0, diffed.stderr
+        diff_payload = json.loads(diffed.stdout)
+        assert diff_payload["summary"] == {"added": 1, "removed": 1, "changed": 1, "unchanged": 0}
+        assert "added.lua" in diff_payload["added"]
+        assert "removed.lua" in diff_payload["removed"]
+        assert "keep.lua" in diff_payload["changed"]
+
+        output = root / "existing.pak"
+        output.write_bytes(b"old-output")
+        backup = pakforge.backup_file(output)
+        assert backup and backup.is_file()
+        assert backup.read_bytes() == b"old-output"
 
         invalid = root / "invalid.pak"
         invalid.write_bytes(b"not-a-valid-pak")
@@ -90,6 +112,36 @@ def main() -> None:
         detection_payload = json.loads(detected.stdout)
         assert detection_payload["status"] == "unsupported_or_invalid"
         assert detection_payload["recommendations"]
+
+        doctor = run("doctor", str(invalid), "--json")
+        assert doctor.returncode == 2
+        doctor_payload = json.loads(doctor.stdout)
+        assert doctor_payload["status"] == "attention_required"
+        assert doctor_payload["issues"]
+
+        config_home = root / "config"
+        profile_env = {**os.environ, "XDG_CONFIG_HOME": str(config_home)}
+        profile = subprocess.run(
+            [sys.executable, str(PAKFORGE), "profile", "init", "debug", "--pak", str(invalid), "--lua-dir", str(new_dir), "--output", str(root / "debug.pak")],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            env=profile_env,
+            check=False,
+        )
+        assert profile.returncode == 0, profile.stderr
+        profile_payload = json.loads((config_home / "pakforge" / "profiles" / "debug.json").read_text(encoding="utf-8"))
+        assert profile_payload["target_prefix"] == "Script"
+        listed = subprocess.run(
+            [sys.executable, str(PAKFORGE), "profile", "list"],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            env=profile_env,
+            check=False,
+        )
+        assert listed.returncode == 0
+        assert "debug" in listed.stdout
 
     lua_help = run("lua-pipeline", "--help")
     assert lua_help.returncode == 0
