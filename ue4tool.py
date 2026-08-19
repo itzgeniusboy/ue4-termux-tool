@@ -25,6 +25,7 @@ APP_NAME = "tool"
 DOWNLOAD_DIR = Path("/sdcard/Download")
 REPORT_ENDPOINT_ENV = "UE4TOOL_REPORT_ENDPOINT"
 REPORT_ENDPOINT_DEFAULT = "https://ue4bugrelay-vlych7sk.manus.space/api/report"
+DEFAULT_UPDATE_INTERVAL_SECONDS = 6 * 60 * 60
 
 
 class ToolError(RuntimeError):
@@ -260,17 +261,18 @@ def copy_lua_files(source: Path, staging: Path, target_prefix: str, target_file:
         shutil.copy2(source, destination)
         return 1
 
-    files = [p for p in source.rglob("*") if p.is_file() and p.suffix.lower() == ".lua"]
-    if not files:
-        fail(f"no .lua files found under {source}")
     count = 0
-    for lua_file in files:
+    for lua_file in source.rglob("*.lua"):
+        if not lua_file.is_file():
+            continue
         relative_source = lua_file.relative_to(source)
         relative = PurePosixPath(target_prefix) / PurePosixPath(relative_source.as_posix()) if target_prefix else PurePosixPath(relative_source.as_posix())
         destination = safe_destination(staging, relative)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(lua_file, destination)
+        shutil.copyfile(lua_file, destination)
         count += 1
+    if count == 0:
+        fail(f"no .lua files found under {source}")
     return count
 
 
@@ -470,7 +472,7 @@ def execute_with_recovery(command: str, handler, args: argparse.Namespace) -> bo
 
 
 def start_background_update() -> None:
-    """Start one detached update check without delaying the interactive menu."""
+    """Start a detached update check without delaying the interactive menu."""
     if os.environ.get("TOOL_NO_AUTO_UPDATE") == "1":
         return
     project = Path(__file__).resolve().parent
@@ -481,6 +483,18 @@ def start_background_update() -> None:
     cache.mkdir(parents=True, exist_ok=True)
     lock = cache / "tool-update.lock"
     log = cache / "tool-update.log"
+    last_check = cache / "tool-update.last-success"
+    try:
+        interval = max(60, int(os.environ.get("TOOL_UPDATE_INTERVAL_SECONDS", DEFAULT_UPDATE_INTERVAL_SECONDS)))
+    except ValueError:
+        interval = DEFAULT_UPDATE_INTERVAL_SECONDS
+    try:
+        if time.time() - last_check.stat().st_mtime < interval:
+            return
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return
     try:
         fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         os.close(fd)
@@ -495,8 +509,9 @@ def start_background_update() -> None:
         except (FileNotFoundError, OSError):
             return
     command = (
-        f"bash {shlex.quote(str(update_script))} > {shlex.quote(str(log))} 2>&1; "
-        f"rm -f {shlex.quote(str(lock))}"
+        f"if bash {shlex.quote(str(update_script))} > {shlex.quote(str(log))} 2>&1; then "
+        f"touch {shlex.quote(str(last_check))}; "
+        f"fi; rm -f {shlex.quote(str(lock))}"
     )
     try:
         subprocess.Popen(

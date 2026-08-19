@@ -4,10 +4,11 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ue4tool import REPORT_ENDPOINT_DEFAULT, _send_report, sanitize_diagnostic_text
+from ue4tool import REPORT_ENDPOINT_DEFAULT, _send_report, sanitize_diagnostic_text, start_background_update
 
 ROOT = Path(__file__).resolve().parent
 TOOL = ROOT / "ue4tool.py"
@@ -27,6 +28,22 @@ installer_text = (ROOT / "install-termux.sh").read_text(encoding="utf-8")
 assert 'CARGO_BIN_DIR="${CARGO_HOME:-$HOME/.cargo}/bin"' in installer_text
 assert 'ln -sf "$REPAK_CARGO_BIN" "$BIN_DIR/repak"' in installer_text
 assert 'export PATH="$BIN_DIR:$CARGO_BIN_DIR:$PATH"' in installer_text
+
+assert "DEFAULT_UPDATE_INTERVAL_SECONDS = 6 * 60 * 60" in source_text
+assert "tool-update.last-success" in source_text
+assert 'source.rglob("*.lua")' in source_text
+assert "shutil.copyfile(lua_file, destination)" in source_text
+
+timings: dict[str, float] = {}
+
+with tempfile.TemporaryDirectory(prefix="tool-update-cache-test-") as update_cache:
+    cache_dir = Path(update_cache)
+    (cache_dir / "tool-update.last-success").touch()
+    started = time.perf_counter()
+    with patch.dict(os.environ, {"XDG_CACHE_HOME": update_cache}, clear=False), patch("ue4tool.subprocess.Popen") as update_process:
+        start_background_update()
+    timings["background_update_throttled"] = time.perf_counter() - started
+    update_process.assert_not_called()
 
 with tempfile.TemporaryDirectory(prefix="ue4tool-test-") as tmp:
     base = Path(tmp)
@@ -59,24 +76,30 @@ else:
     input_pak = base / "input.pak"
     input_pak.write_text("placeholder", encoding="utf-8")
     unpacked = base / "unpacked-from-pak"
+    started = time.perf_counter()
     subprocess.run([
         sys.executable, str(TOOL), "unpack", str(input_pak), str(unpacked), "--repak", str(fake_repak)
     ], check=True)
+    timings["unpack"] = time.perf_counter() - started
     assert (unpacked / "Existing/file.txt").read_text(encoding="utf-8") == "existing"
 
     repacked = base / "repacked.pak"
+    started = time.perf_counter()
     subprocess.run([
         sys.executable, str(TOOL), "repack", str(source), str(repacked),
         "--version", "v7", "--repak", str(fake_repak)
     ], check=True)
+    timings["repack"] = time.perf_counter() - started
     assert repacked.exists()
     assert "Existing/file.txt" in repacked.read_text(encoding="utf-8")
 
     injected = base / "injected.pak"
+    started = time.perf_counter()
     subprocess.run([
         sys.executable, str(TOOL), "inject", str(input_pak), str(lua), str(injected), "--repak", str(fake_repak),
         "--target-prefix", "Script", "--version", "v7"
     ], check=True)
+    timings["inject"] = time.perf_counter() - started
     text = injected.read_text(encoding="utf-8")
     assert "Script/MyMod/init.lua" in text
     assert "Script/MyMod/player.lua" in text
@@ -135,8 +158,12 @@ with tempfile.TemporaryDirectory(prefix="tool-report-test-") as report_tmp:
             assert _send_report(reports[0]) is True
             assert default_sent.call_args.args[0].full_url == REPORT_ENDPOINT_DEFAULT
 
+started = time.perf_counter()
 help_result = subprocess.run([sys.executable, str(TOOL), "--help"], check=True, capture_output=True, text=True)
+timings["startup_help"] = time.perf_counter() - started
 assert "unpack" in help_result.stdout
 assert "repack" in help_result.stdout
 assert "inject" in help_result.stdout
+for label, elapsed in timings.items():
+    print(f"benchmark_{label}_seconds={elapsed:.3f}")
 print("focused-smoke-tests-ok")

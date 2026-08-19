@@ -254,6 +254,12 @@ repak --help
 
 The installer now creates a stable `$PREFIX/bin/repak` link after Cargo builds `repak`, so the command remains available after Termux is restarted.
 
+### Performance notes
+
+The `tool` menu stays responsive because background update checks run at most once every six hours after a successful check. You can use `TOOL_UPDATE_INTERVAL_SECONDS` to choose a longer or shorter interval for your own device, or temporarily skip background checks with `TOOL_NO_AUTO_UPDATE=1 tool`.
+
+`inject` is naturally slower than `unpack` and `repack`: it must unpack the source PAK into temporary staging, copy selected Lua files, then build a new PAK. This tool does not create backup files.
+
 If storage paths do not work:
 
 ```bash
