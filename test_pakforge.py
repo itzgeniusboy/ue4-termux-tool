@@ -11,6 +11,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -56,6 +57,43 @@ def main() -> None:
     assert unpack_parsed.workers == 2
     repack_parsed = pakforge.parser().parse_args(["repack", "source.pak", "edited", "out.pak", "--workers", "3"])
     assert repack_parsed.workers == 3
+    patch_parsed = pakforge.parser().parse_args(["repack", "source.pak", "edited", "out.pak", "--patch", "--verify"])
+    assert patch_parsed.patch is True
+    assert patch_parsed.verify is True
+
+    with tempfile.TemporaryDirectory(prefix="pakforge-patch-") as patch_dir:
+        patch_root = Path(patch_dir)
+        source_pak = patch_root / "source.pak"
+        edited_root = patch_root / "edited"
+        output_pak = patch_root / "patched.pak"
+        original = b"old-data"
+        replacement = b"new-data"
+        source_bytes = b"HEADER" + original + b"TAIL"
+        source_pak.write_bytes(source_bytes)
+        (edited_root / "Content").mkdir(parents=True)
+        (edited_root / "Content" / "x.bin").write_bytes(replacement)
+        entry = SimpleNamespace(
+            offset=6,
+            size=len(original),
+            uncompressed_size=len(original),
+            compression_method=pakforge_core.CM_NONE,
+            compressed_blocks=[],
+            compression_block_size=0,
+            encrypted=False,
+            encryption_method=0,
+            content_hash=hashlib.sha1(original).digest(),
+        )
+        fake_pak = SimpleNamespace(
+            _file_path=source_pak,
+            _index={pakforge_core.PurePath("Content"): {"x.bin": entry}},
+            _zstd_dict=None,
+        )
+        assert pakforge_core.repack_pak_file_patch(fake_pak, edited_root, output_pak, workers=2) == 1
+        patched_bytes = output_pak.read_bytes()
+        assert len(patched_bytes) == len(source_bytes)
+        assert patched_bytes[:6] == source_bytes[:6]
+        assert patched_bytes[6:14] == replacement
+        assert patched_bytes[14:] == source_bytes[14:]
     assert pakforge_core.CM_OODLE == 3
     with patch.object(pakforge_core.OodleCodec, "available", return_value=False):
         assert pakforge_core.effective_repack_compression_method(pakforge_core.CM_OODLE) == pakforge_core.CM_ZSTD
@@ -259,7 +297,7 @@ def main() -> None:
 
     version = run("--version")
     assert version.returncode == 0
-    assert version.stdout.strip() == "PakForge 1.3.6"
+    assert version.stdout.strip() == "PakForge 1.3.7"
 
     with tempfile.TemporaryDirectory(prefix="pakforge-test-") as raw:
         root = Path(raw)

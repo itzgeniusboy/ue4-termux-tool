@@ -150,6 +150,11 @@ pakforge repack /sdcard/Download/game.pak \
   /sdcard/Download/my-files /sdcard/Download/game-result.pak \
   --target-prefix Content/Lua/Mods
 
+# Fast strict in-place patch: replace only existing files whose encoded payload fits.
+pakforge repack /sdcard/Download/game.pak \
+  /sdcard/Download/changed-files /sdcard/Download/game-patched.pak \
+  --patch --verify
+
 # Process multiple PAK files.
 pakforge batch-unpack /sdcard/Download/paks /sdcard/Download/unpacked
 
@@ -176,6 +181,8 @@ pakforge verify /sdcard/Download/game-unpacked
 The `--target-prefix` value must be a relative PAK directory; parent traversal is rejected. PakForge refuses to replace an existing output by default. Use `--overwrite` only after keeping a separate copy of important data. The `--is-od` option is available for OD/custom PAK handling. The original `tool` command remains available for repak-based `unpack`, `repack`, `inject`, `info`, `batch-unpack`, `manifest`, and `verify` workflows.
 
 The native `unpack` and `repack` commands accept `--workers N` (default `4`). Extraction uses atomic per-file replacement and updates the progress display from the coordinator thread. Repack stages edited input files concurrently, then keeps payload serialization single-threaded so offsets, hashes, and index order remain deterministic. If the Termux runtime cannot create a worker pool, PakForge falls back to single-threaded processing. Set `--workers 1` for the most conservative memory profile.
+
+`pakforge repack --patch` is a strict fast path: it copies the original PAK, replaces only changed existing paths, and preserves the original file size, payload offsets, index bytes, and footer. Uncompressed replacements must fit their original allocated slot; compressed replacements must fit every original physical compression block. Patch mode refuses new files, path remapping, `--target-prefix`, and `--full`, rather than silently rebuilding the archive. Use `--verify` to reopen the patched PAK after the in-place writes.
 
 Native PAK entries with compression method `CM_OODLE` (`3`) are supported through an optional, user-supplied Oodle2 runtime. PakForge checks `PAKFORGE_OODLE_DLL`, `SOURCE/oodle2.dll`, the repository directory, and the system library path, then calls `OodleLZ_Decompress` and `OodleLZ_Compress` through `ctypes`. PakForge does not download or bundle the proprietary DLL. Existing Oodle entries require the DLL to unpack; when an edited Oodle entry is repacked without the DLL, newly encoded blocks are written as ZSTD and the entry metadata is updated accordingly. Other compression methods are unchanged.
 

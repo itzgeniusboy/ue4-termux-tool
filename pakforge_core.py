@@ -1141,7 +1141,7 @@ def _encode_entry_payload(plain_data: bytes, pak_relative_path: PurePath, encryp
         return plain_data, len(plain_data)
     validate_encryption_metadata(True, encryption_method, 12)
     physical_size = PakCrypto.align_encrypted_content_size(len(plain_data), encryption_method)
-    padded = plain_data.ljust(physical_size, b'\\x00')
+    padded = plain_data.ljust(physical_size, b'\x00')
     return _encrypt_plaintext(padded, pak_relative_path, encryption_method), len(plain_data)
 
 
@@ -1807,6 +1807,162 @@ def smart_resolve_by_fingerprint(filename: str, repack_file: Path, candidates: l
     if len(final_matches) == 1:
         return final_matches[0]
     return None
+
+def _patch_entry_map(pak_file) -> dict[str, TencentPakEntry]:
+    """Return exact normalized PAK-relative paths for strict patch matching."""
+    result = {}
+    for dir_path, files in pak_file._index.items():
+        for name, entry in files.items():
+            full_path = normalize_pak_path(PurePath(dir_path) / name)
+            if full_path in result:
+                raise ValueError(f"Duplicate PAK path cannot be patched safely: {full_path}")
+            result[full_path] = entry
+    return result
+
+
+def _patch_compressed_payload(pak_file, entry, pak_relative_path: PurePath, new_data: bytes) -> list[tuple[PakCompressedBlock, bytes]]:
+    """Encode changed compressed blocks without changing their count or slots."""
+    if len(new_data) != entry.uncompressed_size:
+        raise ValueError(
+            f"Patch requires unchanged uncompressed size for {pak_relative_path}: "
+            f"old={entry.uncompressed_size}, new={len(new_data)}"
+        )
+    if not entry.compressed_blocks or entry.compression_block_size <= 0:
+        raise ValueError(f"Patch requires a valid original block table for {pak_relative_path}")
+
+    block_size = int(entry.compression_block_size)
+    chunks = [new_data[i:i + block_size] for i in range(0, len(new_data), block_size)] or [b""]
+    if len(chunks) != len(entry.compressed_blocks):
+        raise ValueError(
+            f"Patch would change the block count for {pak_relative_path}: "
+            f"old={len(entry.compressed_blocks)}, new={len(chunks)}"
+        )
+
+    encoded = []
+    order = PakCrypto.generate_block_indices(len(entry.compressed_blocks), entry.encryption_method)
+    for logical_index, physical_index in enumerate(order):
+        block = entry.compressed_blocks[physical_index]
+        logical_capacity = block.end - block.start
+        compressed = _best_compress(chunks[logical_index], entry.compression_method, pak_file._zstd_dict)
+        cipher, logical_size = _encode_entry_payload(
+            compressed, pak_relative_path, entry.encrypted, entry.encryption_method
+        )
+        if logical_size > logical_capacity:
+            raise ValueError(
+                f"Patch payload does not fit original block for {pak_relative_path}: "
+                f"block={logical_index}, old_capacity={logical_capacity}, new={logical_size}"
+            )
+        physical_capacity = PakCrypto.align_encrypted_content_size(
+            logical_capacity, entry.encryption_method
+        ) if entry.encrypted else logical_capacity
+        if len(cipher) > physical_capacity:
+            raise ValueError(
+                f"Patch ciphertext does not fit original block for {pak_relative_path}: "
+                f"block={logical_index}, old_capacity={physical_capacity}, new={len(cipher)}"
+            )
+        encoded.append((block, cipher.ljust(physical_capacity, b"\x00")))
+    return encoded
+
+
+def repack_pak_file_patch(
+    pak_file,
+    edited_root: Path,
+    output_path: Path,
+    target_path: str | None = None,
+    workers: int = 4,
+) -> int:
+    """Patch changed payload slots in place while preserving the original index and offsets.
+
+    Patch mode is deliberately strict. It changes only bytes in existing payload slots;
+    it never adds entries, changes compression methods, changes block tables, or rewrites
+    the index. Files whose uncompressed size or compressed block payload cannot fit are
+    rejected instead of being truncated or silently left unchanged.
+    """
+    edited_root = Path(edited_root)
+    source_path = Path(pak_file._file_path)
+    output_path = Path(output_path)
+    if source_path.resolve() == output_path.resolve():
+        raise ValueError("Patch output must be different from the source PAK")
+    entry_map = _patch_entry_map(pak_file)
+    prefix = normalize_pak_path(target_path) if target_path else ""
+
+    candidates = {}
+    for source in sorted(edited_root.rglob("*")):
+        if not source.is_file():
+            continue
+        relative = normalize_pak_path(source.relative_to(edited_root))
+        pak_path = normalize_pak_path(PurePath(prefix) / relative) if prefix else relative
+        if pak_path not in entry_map:
+            raise ValueError(
+                f"Patch file has no exact existing PAK entry: {pak_path}. "
+                "Patch mode cannot add or rename files."
+            )
+        if pak_path in candidates:
+            raise ValueError(f"Duplicate patch input: {pak_path}")
+        candidates[pak_path] = (source, entry_map[pak_path])
+
+    staged = _stage_repack_inputs(candidates, workers=workers)
+    changed = {}
+    for pak_path, (source, entry) in candidates.items():
+        raw = staged[pak_path]
+        # The per-entry SHA1 is the cheapest safe changed-file test. If a legacy
+        # PAK has a nonstandard hash, the file is conservatively treated as changed.
+        if entry.content_hash == SHA1.new(raw).digest():
+            continue
+        if entry.compression_method == CM_OODLE and not OodleCodec.available():
+            raise RuntimeError(
+                f"Oodle runtime unavailable for changed entry {pak_path}; "
+                "patch mode cannot switch codecs without changing the index."
+            )
+        if entry.compression_method == CM_NONE:
+            if len(raw) != entry.uncompressed_size:
+                raise ValueError(
+                    f"Patch requires unchanged uncompressed size for {pak_path}: "
+                    f"old={entry.uncompressed_size}, new={len(raw)}"
+                )
+            payload, _ = _encode_entry_payload(
+                raw, PurePath(pak_path), entry.encrypted, entry.encryption_method
+            )
+            capacity = PakCrypto.align_encrypted_content_size(
+                entry.size, entry.encryption_method
+            ) if entry.encrypted else entry.size
+            if len(payload) > capacity:
+                raise ValueError(f"Patch payload does not fit original slot for {pak_path}")
+            changed[pak_path] = [(entry.offset, payload.ljust(capacity, b"\x00"))]
+        elif entry.compression_method in SUPPORTED_COMPRESSION_METHODS:
+            changed[pak_path] = [
+                (block.start, payload) for block, payload in
+                _patch_compressed_payload(pak_file, entry, PurePath(pak_path), raw)
+            ]
+        else:
+            raise ValueError(
+                f"Unsupported compression method {entry.compression_method} for patch entry {pak_path}"
+            )
+
+    if not changed:
+        console.print("[bold yellow]No changed files found; patch output was not created.[/bold yellow]")
+        return 0
+
+    temporary = output_path.with_name(f".{output_path.name}.pakforge-patch-{uuid.uuid4().hex}.tmp")
+    try:
+        shutil.copy2(source_path, temporary)
+        with open(temporary, "r+b") as outfh:
+            for pak_path, writes in changed.items():
+                for offset, payload in writes:
+                    outfh.seek(offset)
+                    outfh.write(payload)
+        if temporary.stat().st_size != source_path.stat().st_size:
+            raise RuntimeError("Patch changed the PAK file size; refusing to replace output")
+        os.replace(temporary, output_path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+    console.print(
+        f"[bold green]Patch complete: {len(changed)} changed file(s); "
+        "all original offsets, index bytes, and file size preserved.[/bold green]"
+    )
+    return len(changed)
+
 
 def repack_pak_file_with_block_display(pak_file, edited_root: Path, output_path: Path, workers: int = 4):
     """Original repack with simple block display - WORKING"""

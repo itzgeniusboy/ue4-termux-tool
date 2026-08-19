@@ -29,6 +29,7 @@ try:
         dump_unpacking_log,
         main_menu,
         repack_pak_file_full,
+        repack_pak_file_patch,
         repack_pak_file_with_block_display,
     )
 except ImportError as exc:
@@ -38,7 +39,7 @@ except ImportError as exc:
     ) from exc
 
 APP_NAME = "PakForge"
-VERSION = "1.3.6"
+VERSION = "1.3.7"
 MANIFEST_NAME = ".pakforge-manifest.json"
 CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "pakforge"
 PROFILE_DIRECTORY = CONFIG_HOME / "profiles"
@@ -1170,7 +1171,16 @@ def repack_command(args: argparse.Namespace) -> None:
     pak, _, _ = open_pak_auto(source_pak, args.is_od)
     output.parent.mkdir(parents=True, exist_ok=True)
     target_prefix = normalize_target_prefix(args.target_prefix)
-    if target_prefix:
+    if getattr(args, "patch", False) and (args.full or target_prefix):
+        raise SystemExit("--patch cannot be combined with --full or --target-prefix; patch mode only replaces exact existing paths.")
+    if getattr(args, "patch", False):
+        count = repack_pak_file_patch(
+            pak,
+            edited,
+            output,
+            workers=getattr(args, "workers", 4),
+        )
+    elif target_prefix:
         count = repack_pak_file_full(
             pak, edited, output, target_path=target_prefix, force_add=True, workers=getattr(args, "workers", 4)
         )
@@ -1301,6 +1311,11 @@ def parser() -> argparse.ArgumentParser:
     repack.add_argument("edited_dir")
     repack.add_argument("output")
     repack.add_argument("--full", action="store_true")
+    repack.add_argument(
+        "--patch",
+        action="store_true",
+        help="replace changed existing payloads in place without rewriting the index or offsets",
+    )
     repack.add_argument("--target-prefix", help="add edited files under this relative directory inside the PAK")
     repack.add_argument("--overwrite", action="store_true")
     repack.add_argument("--workers", type=int, default=4, help="parallel input-staging workers (default: 4)")
