@@ -73,8 +73,9 @@ show_first_run() {
     3) spinner='\\' ;;
   esac
   printf '\033[2J\033[H'
-  printf '%bPakForge%b\n' "$PINK" "$RESET"
-  printf '%bFirst-time setup is running in the background.%b\n\n' "$CYAN" "$RESET"
+  printf '%bPakForge Launcher — OPEN%b\n' "$PINK" "$RESET"
+  printf '%bFull PakForge menu is preparing automatically.%b\n\n' "$CYAN" "$RESET"
+  printf 'This launcher is active now; no second command is needed.\n'
   printf '%s %3s%% complete  |  %3s%% remaining  |  %s\n' "$spinner" "$percent" "$remaining" "$stage"
   progress_bar "$percent"
   printf '  %3s%%\n\n' "$percent"
@@ -82,7 +83,7 @@ show_first_run() {
   printf 'Python packages, Lua 5.1, and repak will continue after launch.\n\n'
   printf '%bState:%b %s\n' "$CYAN" "$RESET" "$state"
   printf 'Log: %s\n' "$BOOTSTRAP_LOG"
-  printf 'The full launcher will open automatically when ready.\n'
+  printf 'The full PAK/Lua menu will open automatically when ready.\n'
 }
 
 setup_bootstrap() {

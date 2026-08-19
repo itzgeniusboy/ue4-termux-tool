@@ -58,8 +58,9 @@ def show_status(status: dict, tick: int = 0) -> None:
         clear = "\033[2J\033[H"
         accent = "\033[1;36m"
         reset = "\033[0m"
-    print(f"{clear}PakForge first-run setup")
+    print(f"{clear}PakForge Launcher — OPEN")
     print("========================")
+    print("Full PakForge menu is preparing automatically; no second command is needed.")
     print(f"{spinner} {percent:3d}% complete  |  {remaining:3d}% remaining")
     print(f"{progress_bar(percent)}  {percent:3d}%")
     print(f"{accent}Stage {stage_index}/{stage_total}:{reset} {stage}")
@@ -68,6 +69,7 @@ def show_status(status: dict, tick: int = 0) -> None:
     if status.get("error"):
         print(f"Error: {status['error']}")
     print("\nSetup continues transparently with official package managers.")
+    print("This launcher is active now; the full PAK/Lua menu will unlock automatically.")
     print("Press Enter to refresh, `s` for full status, or `q` to exit.")
     sys.stdout.flush()
 
