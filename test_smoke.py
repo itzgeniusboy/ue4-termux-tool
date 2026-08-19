@@ -147,6 +147,19 @@ with tempfile.TemporaryDirectory(prefix="tool-report-test-") as report_tmp:
             assert sent.call_args.args[0].get_header("User-agent") == "ue4-termux-tool/1.0"
         assert (Path(consent_tmp) / "ue4tool" / "report_consent").read_text(encoding="utf-8").strip() == "yes"
 
+    with tempfile.TemporaryDirectory(prefix="tool-no-consent-test-") as declined_tmp:
+        declined_file = Path(declined_tmp) / "ue4tool" / "report_consent"
+        declined_file.parent.mkdir(parents=True)
+        declined_file.write_text("no\n", encoding="utf-8")
+        declined_env = {
+            "TOOL_NO_REPORT": "0",
+            "UE4TOOL_REPORT_ENDPOINT": "https://relay.example/api/report",
+            "XDG_CONFIG_HOME": declined_tmp,
+        }
+        with patch.dict(os.environ, declined_env, clear=False), patch("ue4tool.urlrequest.urlopen") as blocked_send:
+            assert _send_report(reports[0]) is False
+            blocked_send.assert_not_called()
+
     with tempfile.TemporaryDirectory(prefix="tool-default-endpoint-test-") as default_tmp:
         default_response = MagicMock()
         default_response.__enter__.return_value.status = 202

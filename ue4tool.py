@@ -76,8 +76,15 @@ def reporting_consent() -> bool:
     except OSError:
         saved = ""
 
-    if saved in {"yes", "no"}:
-        return saved == "yes"
+    if saved == "yes":
+        return True
+    if saved == "no":
+        print(
+            "Anonymous report skipped: you previously selected No. "
+            "To be asked again, run: rm -f ~/.config/ue4tool/report_consent",
+            file=sys.stderr,
+        )
+        return False
 
     try:
         answer = input("Send anonymous bug report? [y/N] ").strip().lower()
