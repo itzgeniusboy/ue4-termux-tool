@@ -56,6 +56,9 @@ def main() -> None:
     assert unpack_parsed.workers == 2
     repack_parsed = pakforge.parser().parse_args(["repack", "source.pak", "edited", "out.pak", "--workers", "3"])
     assert repack_parsed.workers == 3
+    assert pakforge_core.CM_OODLE == 3
+    with patch.object(pakforge_core.OodleCodec, "available", return_value=False):
+        assert pakforge_core.effective_repack_compression_method(pakforge_core.CM_OODLE) == pakforge_core.CM_ZSTD
     auto_parsed = pakforge.parser().parse_args([
         "auto", "--pak", "source.pak", "--edit-dir", "edits", "--output", "out.pak",
         "--target-prefix", "Content/Lua", "--workers", "2",
@@ -256,7 +259,7 @@ def main() -> None:
 
     version = run("--version")
     assert version.returncode == 0
-    assert version.stdout.strip() == "PakForge 1.3.5"
+    assert version.stdout.strip() == "PakForge 1.3.6"
 
     with tempfile.TemporaryDirectory(prefix="pakforge-test-") as raw:
         root = Path(raw)

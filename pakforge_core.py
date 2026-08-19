@@ -12,6 +12,8 @@ import hashlib
 import platform
 import subprocess
 import base64
+import ctypes
+import ctypes.util
 import zlib
 from dataclasses import dataclass
 from functools import lru_cache
@@ -196,10 +198,17 @@ SUPPORTED_ENCRYPTION_METHODS = {
 
 CM_NONE = 0
 CM_ZLIB = 1
+CM_OODLE = 3
 CM_ZSTD = 6
 CM_ZSTD_DICT = 8
 CM_MASK = 15
-SUPPORTED_COMPRESSION_METHODS = {CM_NONE, CM_ZLIB, CM_ZSTD, CM_ZSTD_DICT}
+SUPPORTED_COMPRESSION_METHODS = {CM_NONE, CM_ZLIB, CM_OODLE, CM_ZSTD, CM_ZSTD_DICT}
+
+# Oodle's public compressor enum uses Kraken (8) as the broadly compatible
+# default codec. The DLL is optional and must be supplied by the user; PakForge
+# never downloads or bundles this proprietary runtime.
+OODLE_CODEC_KRAKEN = 8
+OODLE_LEVEL_NORMAL = 4
 
 
 def normalize_pak_path(path: str | PurePath) -> str:
@@ -650,6 +659,143 @@ class PakCrypto:
                 inverse[x] = i
             return inverse
 
+class OodleCodec:
+    """Optional adapter for a user-provided Oodle2 runtime.
+
+    Oodle is proprietary software, so PakForge only loads a DLL that the user
+    already owns or has installed. No runtime is downloaded or bundled. The
+    public C ABI is configured lazily so normal ZLIB/ZSTD workflows do not
+    require Oodle or Windows-specific libraries.
+    """
+
+    _runtime = None
+    _load_error = None
+
+    @classmethod
+    def _candidate_paths(cls) -> list[str]:
+        candidates = []
+        configured = os.environ.get("PAKFORGE_OODLE_DLL")
+        if configured:
+            candidates.append(configured)
+        module_dir = Path(__file__).resolve().parent
+        candidates.extend([
+            str(module_dir / "SOURCE" / "oodle2.dll"),
+            str(module_dir / "oodle2.dll"),
+        ])
+        found = ctypes.util.find_library("oodle2")
+        if found:
+            candidates.append(found)
+        # Preserve order while removing duplicates.
+        return list(dict.fromkeys(candidates))
+
+    @classmethod
+    def _load(cls):
+        if cls._runtime is not None or cls._load_error is not None:
+            return cls._runtime
+        last_error = None
+        for candidate in cls._candidate_paths():
+            try:
+                loader = getattr(ctypes, "WinDLL", ctypes.CDLL)
+                lib = loader(candidate)
+                decompress = lib.OodleLZ_Decompress
+                compress = lib.OodleLZ_Compress
+                # Oodle's public ABI uses pointer-sized signed integers for
+                # buffer lengths and returns the number of bytes written, or
+                # a negative/zero value on failure.
+                decompress.argtypes = [
+                    ctypes.c_void_p, ctypes.c_int64,
+                    ctypes.c_void_p, ctypes.c_int64,
+                    ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                    ctypes.c_void_p, ctypes.c_int64,
+                    ctypes.c_void_p, ctypes.c_void_p,
+                    ctypes.c_void_p, ctypes.c_int64, ctypes.c_int,
+                ]
+                decompress.restype = ctypes.c_int64
+                compress.argtypes = [
+                    ctypes.c_int, ctypes.c_void_p, ctypes.c_int64,
+                    ctypes.c_void_p, ctypes.c_int,
+                    ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+                    ctypes.c_void_p, ctypes.c_int64,
+                ]
+                compress.restype = ctypes.c_int64
+                cls._runtime = (lib, decompress, compress, candidate)
+                return cls._runtime
+            except (AttributeError, OSError, TypeError) as exc:
+                last_error = exc
+        cls._load_error = last_error or FileNotFoundError("oodle2.dll not found")
+        return None
+
+    @classmethod
+    def available(cls) -> bool:
+        return cls._load() is not None
+
+    @classmethod
+    def description(cls) -> str:
+        runtime = cls._load()
+        if runtime:
+            return f"available ({runtime[3]})"
+        return f"unavailable ({cls._load_error})"
+
+    @classmethod
+    def decompress(cls, block: bytes, raw_size: int) -> bytes:
+        runtime = cls._load()
+        if runtime is None:
+            raise RuntimeError(
+                "CM_OODLE entry requires a user-provided oodle2.dll; "
+                "set PAKFORGE_OODLE_DLL or place it in SOURCE/"
+            )
+        if raw_size <= 0:
+            raise ValueError("Oodle decompression requires a positive raw block size")
+        _lib, decompress, _compress, _path = runtime
+        compressed = ctypes.create_string_buffer(block)
+        raw = ctypes.create_string_buffer(raw_size)
+        written = decompress(
+            ctypes.cast(compressed, ctypes.c_void_p), len(block),
+            ctypes.cast(raw, ctypes.c_void_p), raw_size,
+            1, 1, 0, None, 0, None, None, None, 0, 0,
+        )
+        if written <= 0 or written > raw_size:
+            raise RuntimeError(f"OodleLZ_Decompress failed with result {written}")
+        return raw.raw[:written]
+
+    @classmethod
+    def compress(cls, raw_data: bytes) -> bytes:
+        runtime = cls._load()
+        if runtime is None:
+            raise RuntimeError(
+                "CM_OODLE compression requested but oodle2.dll is unavailable"
+            )
+        _lib, _decompress, compress, _path = runtime
+        raw = ctypes.create_string_buffer(raw_data)
+        # Oodle compressed output can be marginally larger than its input.
+        capacity = len(raw_data) + max(65536, len(raw_data) // 16) + 64
+        output = ctypes.create_string_buffer(capacity)
+        written = compress(
+            OODLE_CODEC_KRAKEN,
+            ctypes.cast(raw, ctypes.c_void_p), len(raw_data),
+            ctypes.cast(output, ctypes.c_void_p), OODLE_LEVEL_NORMAL,
+            None, None, None, None, capacity,
+        )
+        if written <= 0 or written > capacity:
+            raise RuntimeError(f"OodleLZ_Compress failed with result {written}")
+        return output.raw[:written]
+
+
+def effective_repack_compression_method(method: int) -> int:
+    """Use ZSTD for newly encoded data when the optional Oodle DLL is absent.
+
+    Existing Oodle payloads are copied byte-for-byte unless an edited entry is
+    being rebuilt. An edited Oodle entry can therefore remain interoperable in
+    an offline test PAK by switching its newly encoded blocks to ZSTD.
+    """
+    if method == CM_OODLE and not OodleCodec.available():
+        console.print(
+            "[bold yellow]Oodle unavailable; encoding edited blocks as ZSTD instead.[/bold yellow]"
+        )
+        return CM_ZSTD
+    return method
+
+
 class PakCompression:
     @staticmethod
     @lru_cache(maxsize=33)
@@ -659,12 +805,19 @@ class PakCompression:
     def zstd_dictionary(dict_data) -> ZstdCompressionDict:
         return ZstdCompressionDict(dict_data, DICT_TYPE_AUTO)
     @staticmethod
-    def decompress_block(block, dict: Optional[ZstdCompressionDict], compression_method: int) -> bytes:
+    def decompress_block(
+        block,
+        dict: Optional[ZstdCompressionDict],
+        compression_method: int,
+        uncompressed_size: Optional[int] = None,
+    ) -> bytes:
         if compression_method == CM_ZLIB:
             try:
                 return zlib.decompress(block)
             except zlib.error:
                 return block
+        if compression_method == CM_OODLE:
+            return OodleCodec.decompress(block, int(uncompressed_size or 0))
         else:
             if compression_method == CM_ZSTD or compression_method == CM_ZSTD_DICT:
                 if compression_method!= CM_ZSTD_DICT:
@@ -697,6 +850,7 @@ class TencentPakFile:
         else:
             if method_int == CM_NONE: return "NONE"
             if method_int == CM_ZLIB: return "ZLIB"
+            if method_int == CM_OODLE: return "OODLE"
             if method_int == CM_ZSTD: return "ZSTD"
             if method_int == CM_ZSTD_DICT: return "ZSTD_DICT"
             return "UNKNOWN"
@@ -821,14 +975,21 @@ class TencentPakFile:
                         data = PakCrypto.decrypt_block(data, file_path, encryption_method)
                     file.write(data)
                 else:
-                    for x in PakCrypto.generate_block_indices(
+                    for block_number, x in enumerate(PakCrypto.generate_block_indices(
                         len(entry.compressed_blocks), encryption_method
-                    ):
+                    )):
                         data = self._peek_block_content(entry.compressed_blocks[x], encryption_method)
                         if entry.encrypted:
                             data = PakCrypto.decrypt_block(data, file_path, encryption_method)
+                        expected_raw_size = None
+                        if compression_method == CM_OODLE:
+                            block_size = int(entry.compression_block_size or 0)
+                            expected_raw_size = min(
+                                block_size,
+                                max(0, entry.uncompressed_size - block_number * block_size),
+                            )
                         data = PakCompression.decompress_block(
-                            data, self._zstd_dict, compression_method
+                            data, self._zstd_dict, compression_method, expected_raw_size
                         )
                         file.write(data)
             os.replace(temporary_path, file_path)
@@ -1006,7 +1167,9 @@ def _repack_uncompressed(outfh, pak_file, entry, pak_relative_path: PurePath, ne
             outfh.write(src.read(target_size - len(plaintext)))
 
 def _best_compress(chunk, cm, zstd_dict=None):
-    """Compress one chunk at the best achievable level."""
+    """Compress one chunk using the selected native method."""
+    if cm == CM_OODLE:
+        return OodleCodec.compress(chunk)
     if cm == CM_ZLIB:
         return zlib.compress(chunk, 9)
     if cm in (CM_ZSTD, CM_ZSTD_DICT):
@@ -1272,7 +1435,8 @@ def repack_pak_file_full(pak_file, edited_root, output_path, target_path=None, f
                 new_raw = staged_inputs[full_path]
                 pak_rel = PurePath(full_path)
 
-                ne.compression_method = template.compression_method if template else cm
+                requested_compression = template.compression_method if template else cm
+                ne.compression_method = effective_repack_compression_method(requested_compression)
                 ne.encryption_method = template.encryption_method if template else em
                 ne.encrypted = template.encrypted if template else old_entry.encrypted
                 ne.unk1 = template.unk1 if template else old_entry.unk1
@@ -1361,7 +1525,7 @@ def repack_pak_file_full(pak_file, edited_root, output_path, target_path=None, f
                 new_raw = staged_inputs[fp]
                 pak_rel = PurePath(fp)
                 
-                ne.compression_method = template.compression_method
+                ne.compression_method = effective_repack_compression_method(template.compression_method)
                 ne.encryption_method = template.encryption_method
                 ne.encrypted = template.encrypted
                 ne.unk1 = template.unk1
