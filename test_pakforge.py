@@ -330,7 +330,14 @@ def main() -> None:
         calls = {}
 
         def fake_menu_pak(path):
-            return object()
+            return SimpleNamespace(
+                _index={
+                    'Content/Lua/Mods/Mods': {
+                        'one.lua': object(),
+                        'two.luac': object(),
+                    }
+                }
+            )
 
         def fake_menu_repack(pak, staged_root, output_path, target_path=None, force_add=False, workers=4):
             staged_root = Path(staged_root)
@@ -389,13 +396,51 @@ def main() -> None:
     assert 'LUA INJECT (Only Lua files, no full rebuild)' in core_menu
     assert 'SELECT (1-4)' in core_menu
     assert 'EXIT' in core_menu
+    assert 'def _safe_index_parts' in core_source
+    assert 'def _safe_menu_target' in core_source
+    assert 'def _verify_repacked_paths' in core_source
     assert 'PAK TOOL' not in core_menu
     assert 'data_path / "PAK"' not in core_menu
     assert 'data_path / "RESULT"' not in core_menu
 
+    assert pakforge_core._safe_index_parts('Content/Lua') == ('Content', 'Lua')
+    for unsafe in ('../escape', '/absolute', 'C:/absolute', 'Content/../Lua', 'Content//Lua'):
+        try:
+            pakforge_core._safe_index_parts(unsafe)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f'unsafe index path accepted: {unsafe}')
+    assert pakforge_core._safe_menu_target('', 'Content/Lua/Mods') == 'Content/Lua/Mods'
+    for unsafe in ('../escape', '/absolute', 'C:/absolute', 'Content/../Lua'):
+        try:
+            pakforge_core._safe_menu_target(unsafe, 'Content/Lua/Mods')
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f'unsafe menu target accepted: {unsafe}')
+
+    with tempfile.TemporaryDirectory(prefix="pakforge-luac-test-") as raw:
+        root = Path(raw)
+        lua_root = root / 'lua'
+        source = lua_root / 'Mods' / 'ui.lua'
+        source.parent.mkdir(parents=True)
+        source.write_text('return 1\\n', encoding='utf-8')
+
+        def fake_luac(command, **kwargs):
+            Path(command[2]).write_bytes(b'lua51-bytecode')
+            return SimpleNamespace(returncode=0, stdout='', stderr='')
+
+        with patch.object(pakforge.subprocess, 'run', side_effect=fake_luac):
+            compiled_root, _ = pakforge.compile_lua_sources(
+                lua_root, [source], root / 'staging', compiler='/usr/bin/luac5.1'
+            )
+        assert (compiled_root / 'Mods' / 'ui.luac').read_bytes() == b'lua51-bytecode'
+        assert not (compiled_root / 'Mods' / 'ui.lua').exists()
+
     version = run("--version")
     assert version.returncode == 0
-    assert version.stdout.strip() == "PakForge 1.3.8"
+    assert version.stdout.strip() == "PakForge 1.4.0"
 
     with tempfile.TemporaryDirectory(prefix="pakforge-test-") as raw:
         root = Path(raw)

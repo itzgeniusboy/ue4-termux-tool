@@ -48,7 +48,7 @@ except ImportError as exc:
     ) from exc
 
 APP_NAME = "PakForge"
-VERSION = "1.3.8"
+VERSION = "1.4.0"
 MANIFEST_NAME = ".pakforge-manifest.json"
 CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "pakforge"
 PROFILE_DIRECTORY = CONFIG_HOME / "profiles"
@@ -547,8 +547,11 @@ def lua_pipeline_command(args: argparse.Namespace) -> None:
                 output.unlink()
             backup.replace(output)
         raise
-    verified_paths = {row["path"] for row in inventory(verified)}
-    expected = {f"{target_prefix}/{relative}" for relative in report["lua_files"]}
+    verified_paths = {row["path"].replace('\\\\', '/').lower() for row in inventory(verified)}
+    expected = {
+        f"{target_prefix}/{Path(relative).with_suffix('.luac' if args.compile_lua else Path(relative).suffix).as_posix()}".lower()
+        for relative in report["lua_files"]
+    }
     missing = sorted(expected - verified_paths)
     if missing:
         if staging is not None:
@@ -766,13 +769,13 @@ def _write_auto_report(report_path: Path, report: dict) -> None:
 
 
 def _rename_compiled_lua_to_luac(compiled_root: Path, relative: Path) -> Path:
-    """Give compiled Lua 5.1 bytecode the `.luac` suffix expected by PAK assets."""
+    """Return Lua 5.1 bytecode using the `.luac` suffix expected by PAK assets."""
     compiled_path = compiled_root / relative
     bytecode_path = compiled_path.with_suffix(".luac")
-    if compiled_path != bytecode_path:
-        if not compiled_path.is_file():
-            raise SystemExit(f"Lua compiler did not produce output: {compiled_path}")
+    if compiled_path.is_file() and compiled_path != bytecode_path:
         compiled_path.replace(bytecode_path)
+    if not bytecode_path.is_file():
+        raise SystemExit(f"Lua compiler did not produce output: {bytecode_path}")
     return bytecode_path
 
 
@@ -1158,7 +1161,7 @@ def compile_lua_sources(
     compiled_root.mkdir(parents=True, exist_ok=True)
     for source in lua_files:
         relative = source.relative_to(lua_root)
-        target = compiled_root / relative
+        target = (compiled_root / relative).with_suffix('.luac')
         target.parent.mkdir(parents=True, exist_ok=True)
         completed = subprocess.run(
             [compiler, '-o', str(target), str(source)],

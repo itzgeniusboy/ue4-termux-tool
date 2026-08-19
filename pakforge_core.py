@@ -18,7 +18,7 @@ import ctypes.util
 import zlib
 from dataclasses import dataclass
 from functools import lru_cache
-from pathlib import PurePath, Path
+from pathlib import PurePath, PurePosixPath, Path
 from typing import List, Dict, Tuple, Optional, Any
 import time
 from rich.console import Console
@@ -927,20 +927,21 @@ class TencentPakFile:
         dict_data = reader.s(dict_size)
         self._zstd_dict = PakCompression.zstd_dictionary(dict_data)
     def _load_index(self, index_data) -> None:
-        if self._pak_info.version <= 10:
-            raise ValueError(f'Unsupported version: {self._pak_info.version}')
-        else:
-            reader = Reader(index_data)
-            self._mount_point = self._construct_mount_point(reader.string())
-            self._files = [TencentPakEntry(reader, self._pak_info.version) for _ in range(reader.u4())]
-            for _ in range(reader.u8()):
-                dir_path = PurePath(reader.string())
-                e = {reader.string(): self._files[~reader.i4()] for _ in range(reader.u8())}
-                if self._is_zstd_with_dict and dir_path.name == 'zstddic':
-                    assert len(e) == 1
-                    self._construct_zstd_dict(e[[*e.keys()][0]])
-                else:
-                    self._index.update({PurePath(dir_path): e})
+        if self._pak_info.version < 7:
+            raise ValueError(f'Unsupported Tencent PAK version: {self._pak_info.version}')
+
+        reader = Reader(index_data)
+        self._mount_point = self._construct_mount_point(reader.string())
+        self._files = [TencentPakEntry(reader, self._pak_info.version) for _ in range(reader.u4())]
+        for _ in range(reader.u8()):
+            dir_path = PurePath(reader.string())
+            entries = {reader.string(): self._files[~reader.i4()] for _ in range(reader.u8())}
+            if self._is_zstd_with_dict and dir_path.name == 'zstddic':
+                if len(entries) != 1:
+                    raise ValueError('Invalid ZSTD dictionary directory')
+                self._construct_zstd_dict(next(iter(entries.values())))
+            else:
+                self._index[dir_path] = entries
     
     def _write_to_disk(
         self,
@@ -1004,10 +1005,14 @@ class TencentPakFile:
         out_path.mkdir(parents=True, exist_ok=True)
         jobs = []
         for dir_path, dir_content in self._index.items():
-            current_out_path = out_path / dir_path
+            dir_parts = _safe_index_parts(dir_path)
+            current_out_path = out_path.joinpath(*dir_parts)
             current_out_path.mkdir(parents=True, exist_ok=True)
             for file_name, entry in dir_content.items():
-                jobs.append((current_out_path / file_name, entry))
+                file_parts = _safe_index_parts(file_name)
+                if not file_parts:
+                    raise ValueError(f'Unsafe empty PAK file name: {file_name!r}')
+                jobs.append((current_out_path.joinpath(*file_parts), entry))
 
         total_files = len(jobs)
         try:
@@ -1036,19 +1041,17 @@ class TencentPakFile:
                 return
 
             try:
-                executor = ThreadPoolExecutor(max_workers=worker_count)
-            except (OSError, RuntimeError) as exc:
-                console.print(
-                    f"[bold yellow]Parallel extraction unavailable; using single-threaded mode: {exc}[/bold yellow]"
-                )
-                for job in jobs:
-                    extract_one(job)
-            else:
-                with executor:
+                with ThreadPoolExecutor(max_workers=worker_count) as executor:
                     futures = [executor.submit(extract_one, job) for job in jobs]
                     for future in as_completed(futures):
                         future.result()
                         progress.update(task, advance=1)
+            except (OSError, RuntimeError) as exc:
+                console.print(
+                    f"[bold yellow]Parallel extraction unavailable; retrying single-threaded: {exc}[/bold yellow]"
+                )
+                for job in jobs:
+                    extract_one(job)
 
 def dump_unpacking_log(pak_file, output_log_path: Path):
     with open(output_log_path, 'w', encoding='utf-8') as log_file:
@@ -1571,10 +1574,10 @@ def repack_pak_file_full(pak_file, edited_root, output_path, target_path=None, f
 
                 new_files.append(ne)
                 
-                # FIX 4: Add to all_dirs mapping using the exact validated target_path
-                if target_path not in all_dirs:
-                    all_dirs[target_path] = {}
-                all_dirs[target_path][p.name] = ne
+                # Preserve the complete relative path, including nested directories.
+                pak_path = PurePath(fp)
+                entry_dir = str(pak_path.parent) if str(pak_path.parent) != '.' else ''
+                all_dirs.setdefault(entry_dir, {})[pak_path.name] = ne
                 console.print(f'[green]✓ Added new: {fp}[/green]')
 
     eidx = {id(new_files[i]): i for i in range(len(new_files))}
@@ -2243,8 +2246,44 @@ def display_file_selector(title, folder_path, file_pattern="*.pak"):
         console.print("[bold red][ERROR] Please enter a valid number[/]")
         return None, None
 
-def _directory_has_files(directory: Path) -> bool:
-    return directory.is_dir() and any(path.is_file() for path in directory.rglob("*"))
+def _safe_index_parts(value: str | PurePath) -> tuple[str, ...]:
+    """Validate a PAK index component before mapping it to the filesystem."""
+    normalized = str(value).replace('\\', '/')
+    if normalized in ('', '.'):
+        return ()
+    if normalized.startswith('/') or (len(normalized) > 1 and normalized[1] == ':'):
+        raise ValueError(f'Unsafe PAK index path: {value!r}')
+    parts = normalized.split('/')
+    if any(part in ('', '.', '..') for part in parts):
+        raise ValueError(f'Unsafe PAK index path: {value!r}')
+    return tuple(parts)
+
+
+def _safe_menu_target(value: str, default: str) -> str:
+    """Validate a relative PAK directory supplied by the interactive menu."""
+    candidate = (value or default).replace('\\', '/')
+    if candidate.startswith('/') or (len(candidate) > 1 and candidate[1] == ':'):
+        raise ValueError('Target path must be a relative PAK directory without ..')
+    candidate = candidate.strip('/')
+    parts = candidate.split('/') if candidate else []
+    if not parts or any(part in ('', '.', '..') for part in parts):
+        raise ValueError('Target path must be a relative PAK directory without ..')
+    return '/'.join(parts)
+
+
+def _verify_repacked_paths(output_pak: Path, expected_paths: list[str]) -> TencentPakFile:
+    """Reopen a generated PAK and require every expected edited path to exist."""
+    verified = TencentPakFile(output_pak)
+    actual = {
+        normalize_pak_path(PurePath(directory) / name).lower()
+        for directory, files in verified._index.items()
+        for name in files
+    }
+    expected = {normalize_pak_path(path).lower() for path in expected_paths}
+    missing = sorted(expected - actual)
+    if missing:
+        raise ValueError('Verification missing expected entries: ' + ', '.join(missing[:10]))
+    return verified
 
 
 def unpack_selected_sdcard_pak() -> None:
@@ -2280,7 +2319,11 @@ def lua_inject_selected_sdcard_pak() -> None:
     target_path = safe_input(
         f"[bold {NEON['cyan']}]📁 Target path (inside PAK) [default: {default_target}]:[/bold {NEON['cyan']}] "
     ).strip()
-    target_path = (target_path or default_target).replace('\\', '/').strip('/')
+    try:
+        target_path = _safe_menu_target(target_path, default_target)
+    except ValueError as exc:
+        console.print(f"[bold {NEON['red']}]Lua inject failed: {escape(str(exc))}[/bold {NEON['red']}]")
+        return
 
     lua_files = sorted(
         (
@@ -2296,6 +2339,10 @@ def lua_inject_selected_sdcard_pak() -> None:
         return
 
     output_pak = SDCARD_DOWNLOAD_DIR / f"MODDED_{pak_file.name}"
+    expected_paths = [
+        normalize_pak_path(PurePath(target_path) / source.relative_to(SDCARD_EDIT_DIR))
+        for source in lua_files
+    ]
     try:
         # Stage only Lua files so images, configs, and other EDIT content cannot
         # accidentally enter this Lua-only injection workflow.
@@ -2321,7 +2368,7 @@ def lua_inject_selected_sdcard_pak() -> None:
             console.print(f"[bold {NEON['red']}]No Lua files were repacked.[/bold {NEON['red']}]")
             return
 
-        TencentPakFile(output_pak)
+        _verify_repacked_paths(output_pak, expected_paths)
         console.print(
             f"[bold {NEON['green']}]✅ Lua-injected {count} files to: {output_pak}[/bold {NEON['green']}]"
         )
@@ -2350,9 +2397,18 @@ def repack_selected_sdcard_pak() -> None:
     target_path = safe_input(
         f"[bold {NEON['cyan']}]📁 Target path (inside PAK) [default: {default_target}]:[/bold {NEON['cyan']}] "
     ).strip()
-    target_path = (target_path or default_target).replace('\\', '/').strip('/')
+    try:
+        target_path = _safe_menu_target(target_path, default_target)
+    except ValueError as exc:
+        console.print(f"[bold {NEON['red']}]Repack failed: {escape(str(exc))}[/bold {NEON['red']}]")
+        return
 
     output_pak = SDCARD_DOWNLOAD_DIR / f"MODDED_{pak_file.name}"
+    expected_paths = [
+        normalize_pak_path(PurePath(target_path) / source.relative_to(SDCARD_EDIT_DIR))
+        for source in SDCARD_EDIT_DIR.rglob('*')
+        if source.is_file()
+    ]
     try:
         pak = TencentPakFile(pak_file)
         count = repack_pak_file_full(
@@ -2367,8 +2423,7 @@ def repack_selected_sdcard_pak() -> None:
             console.print(f"[bold {NEON['red']}]No files were repacked.[/bold {NEON['red']}]")
             return
 
-        # Re-opening the generated PAK exercises the native index/hash parser.
-        TencentPakFile(output_pak)
+        _verify_repacked_paths(output_pak, expected_paths)
         console.print(
             f"[bold {NEON['green']}]✅ Repacked {count} files to: {output_pak}[/bold {NEON['green']}]"
         )
