@@ -11,6 +11,10 @@ The project delegates UE4 PAK parsing and writing to [repak](https://github.com/
 | `unpack` | Extract a UE4 `.pak` through `repak`. |
 | `repack` | Create a new UE4 `.pak` from an unpacked directory. |
 | `inject` | Unpack a PAK, copy Lua files into it, and create a new PAK. |
+| `info` | Show safe PAK metadata and a SHA-256 digest; optionally export JSON. |
+| `batch-unpack` | Unpack every `.pak` file in a directory. |
+| `manifest` | Create a SHA-256 manifest for an unpacked or edited directory. |
+| `verify` | Detect missing, changed, or extra files against a manifest. |
 
 ## First-time setup for new Termux users
 
@@ -91,6 +95,10 @@ The menu provides:
 2) PAK Repack
 3) Lua Inject
 4) Update Tool
+5) PAK Info / SHA-256
+6) Create SHA-256 Manifest
+7) Verify SHA-256 Manifest
+8) Batch Unpack All PAKs
 0) Exit
 ```
 
@@ -101,6 +109,26 @@ If the menu cannot find a file, enter its full path when prompted. Storage permi
 ```bash
 termux-setup-storage
 ```
+
+## Power command-line use
+
+The original three workflows remain available. The integrated power commands are:
+
+```bash
+# Show file metadata and a SHA-256 digest; optionally export JSON.
+tool info /sdcard/Download/game.pak --export /sdcard/Download/game-info.json
+
+# Unpack every PAK in a folder into separate output directories.
+tool batch-unpack /sdcard/Download/paks /sdcard/Download/unpacked
+
+# Create and verify a manifest for edited files.
+tool manifest /sdcard/Download/game-unpacked
+tool verify /sdcard/Download/game-unpacked
+```
+
+Unpack, repack, and inject now refuse to replace an existing output by default. Use `--overwrite` only after keeping a separate copy of important data. The original PAK is still protected by default; `inject --in-place` remains an explicit opt-in and does not create a backup.
+
+`info` reports safe file metadata and never reads or uploads PAK contents. Manifests contain only relative file paths, file sizes, and SHA-256 digests. Batch unpack skips non-empty output directories unless `--overwrite` is supplied.
 
 ## Simple command-line use
 
@@ -214,7 +242,11 @@ Always keep your own copy if the original file is important.
 | `--aes-key KEY` | `unpack`, `inject` | Read an encrypted PAK with your known project key. |
 | `--target-prefix PATH` | `inject` | Destination directory inside the PAK; default is `Script`. |
 | `--in-place` | `inject` | Directly replace input without creating a backup. |
-| `--repak PATH` | All commands | Use a specific `repak` executable. |
+| `--repak PATH` | PAK commands | Use a specific `repak` executable. |
+| `--overwrite` | `unpack`, `repack`, `inject`, `batch-unpack` | Explicitly allow replacing an existing output. |
+| `--export PATH` | `info` | Export safe PAK metadata as JSON. |
+| `--output PATH` | `manifest` | Choose a custom manifest path. |
+| `--manifest PATH` | `verify` | Verify against a manifest stored elsewhere. |
 
 View all options:
 

@@ -7,6 +7,7 @@ The tool supports PAK unpacking, PAK repacking, and Lua injection. Running
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -22,6 +23,8 @@ from urllib import error as urlerror
 from urllib.parse import urlparse
 
 APP_NAME = "tool"
+TOOL_VERSION = "2.0.0"
+MANIFEST_NAME = ".dravix-manifest.json"
 DOWNLOAD_DIR = Path("/sdcard/Download")
 REPORT_ENDPOINT_ENV = "UE4TOOL_REPORT_ENDPOINT"
 REPORT_ENDPOINT_DEFAULT = "https://ue4bugrelay-vlych7sk.manus.space/api/report"
@@ -173,6 +176,148 @@ def require_dir(path: Path, label: str) -> Path:
     return path
 
 
+def sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while True:
+            chunk = handle.read(chunk_size)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def iter_regular_files(root: Path):
+    root = root.resolve()
+    if not root.is_dir():
+        fail(f"directory not found: {root}")
+    for path in sorted(root.rglob("*")):
+        if path.is_file() and path.name != MANIFEST_NAME:
+            yield path
+
+
+def create_manifest(root: Path, manifest_path: Path | None = None) -> Path:
+    """Create a portable SHA-256 manifest for an unpacked or edited directory."""
+    root = require_dir(root, "directory").resolve()
+    manifest_path = manifest_path or (root / MANIFEST_NAME)
+    files = []
+    for path in iter_regular_files(root):
+        files.append({
+            "path": path.relative_to(root).as_posix(),
+            "size": path.stat().st_size,
+            "sha256": sha256_file(path),
+        })
+    payload = {
+        "format": 1,
+        "tool": APP_NAME,
+        "tool_version": TOOL_VERSION,
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "files": files,
+    }
+    manifest_path = Path(manifest_path).expanduser()
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return manifest_path
+
+
+def verify_manifest(root: Path, manifest_path: Path | None = None) -> tuple[bool, list[tuple[str, str]]]:
+    """Return whether a directory still matches its SHA-256 manifest."""
+    root = require_dir(root, "directory").resolve()
+    manifest_path = Path(manifest_path).expanduser() if manifest_path else root / MANIFEST_NAME
+    if not manifest_path.is_file():
+        fail(f"manifest not found: {manifest_path}")
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        fail(f"invalid manifest: {exc}")
+    expected = {item["path"]: item for item in payload.get("files", [])}
+    issues: list[tuple[str, str]] = []
+    for relative, item in expected.items():
+        candidate = safe_destination(root, relative)
+        if not candidate.is_file():
+            issues.append(("MISSING", relative))
+        elif candidate.stat().st_size != item.get("size") or sha256_file(candidate) != item.get("sha256"):
+            issues.append(("CHANGED", relative))
+    for candidate in iter_regular_files(root):
+        relative = candidate.relative_to(root).as_posix()
+        if relative not in expected:
+            issues.append(("EXTRA", relative))
+    return not issues, issues
+
+
+def print_manifest_result(ok: bool, issues: list[tuple[str, str]]) -> None:
+    if ok:
+        print("Manifest verification passed.")
+        return
+    print(f"Manifest verification failed: {len(issues)} difference(s)")
+    for status, relative in issues:
+        print(f"  {status}: {relative}")
+
+
+def refuse_existing_output(path: Path, overwrite: bool) -> None:
+    path = path.expanduser()
+    if path.exists() and not overwrite:
+        fail(f"output already exists: {path}; add --overwrite only after keeping a backup")
+
+
+def pak_info(args: argparse.Namespace) -> None:
+    pak = require_file(Path(args.pak), "PAK")
+    stat = pak.stat()
+    payload = {
+        "path": str(pak),
+        "name": pak.name,
+        "size": stat.st_size,
+        "sha256": sha256_file(pak),
+        "modified": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(stat.st_mtime)),
+        "termux": bool(os.environ.get("PREFIX")),
+    }
+    print(f"PAK: {payload['name']}")
+    print(f"Size: {payload['size']:,} bytes")
+    print(f"SHA-256: {payload['sha256']}")
+    print(f"Modified: {payload['modified']}")
+    if args.export:
+        export_path = Path(args.export).expanduser()
+        export_path.parent.mkdir(parents=True, exist_ok=True)
+        export_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        print(f"Inventory metadata exported to: {export_path}")
+
+
+def pak_manifest(args: argparse.Namespace) -> None:
+    manifest = create_manifest(Path(args.directory), Path(args.output).expanduser() if args.output else None)
+    print(f"Manifest created: {manifest}")
+
+
+def pak_verify(args: argparse.Namespace) -> None:
+    ok, issues = verify_manifest(Path(args.directory), Path(args.manifest).expanduser() if args.manifest else None)
+    print_manifest_result(ok, issues)
+    if not ok:
+        raise ToolError("manifest verification failed", 2)
+
+
+def batch_unpack(args: argparse.Namespace) -> None:
+    pak_dir = require_dir(Path(args.pak_dir), "PAK directory")
+    output_root = Path(args.output_dir).expanduser()
+    output_root.mkdir(parents=True, exist_ok=True)
+    pak_files = sorted(pak_dir.glob("*.pak"))
+    if not pak_files:
+        fail(f"no .pak files found in: {pak_dir}")
+    completed = 0
+    for pak in pak_files:
+        output = output_root / pak.stem
+        child_args = argparse.Namespace(**vars(args))
+        child_args.pak = str(pak)
+        child_args.output = str(output)
+        child_args.output_flag = None
+        try:
+            pak_unpack(child_args)
+            completed += 1
+        except ToolError as exc:
+            print(f"Skipping {pak.name}: {exc}", file=sys.stderr)
+    if completed == 0:
+        fail("batch unpack completed no files")
+    print(f"Batch complete: {completed}/{len(pak_files)} PAK(s) unpacked.")
+
+
 def safe_destination(root: Path, relative: str | PurePosixPath) -> Path:
     """Prevent injected paths from escaping the temporary PAK staging folder."""
     rel = PurePosixPath(str(relative).replace("\\", "/"))
@@ -222,6 +367,12 @@ def pak_unpack(args: argparse.Namespace) -> None:
     pak = require_file(Path(args.pak), "PAK")
     output_value = args.output_flag or args.output
     output = Path(output_value).expanduser() if output_value else pak.with_suffix("")
+    if output.exists():
+        if not output.is_dir():
+            fail(f"output path exists as a file: {output}")
+        if any(output.iterdir()) and not args.overwrite:
+            fail(f"output directory is not empty: {output}; add --overwrite to replace its contents")
+    output.mkdir(parents=True, exist_ok=True)
     print(f"[1/1] Unpacking {pak.name}...")
     command = ["unpack", str(pak), "--output", str(output), "--strip-prefix", args.strip_prefix, "--force"]
     if args.quiet:
@@ -233,6 +384,7 @@ def pak_unpack(args: argparse.Namespace) -> None:
 def pak_repack(args: argparse.Namespace) -> None:
     source = require_dir(Path(args.source), "source directory")
     output = Path(args.output).expanduser()
+    refuse_existing_output(output, args.overwrite)
     output.parent.mkdir(parents=True, exist_ok=True)
     print(f"[1/1] Repacking {source}...")
     command = ["pack", str(source), str(output), "--version", args.version, "--mount-point", args.mount_point]
@@ -294,6 +446,8 @@ def lua_inject(args: argparse.Namespace) -> None:
         if not args.in_place:
             fail("refusing to overwrite the original PAK; add --in-place to confirm direct replacement")
         print("Warning: in-place mode will replace the original PAK without creating a backup.", file=sys.stderr)
+    else:
+        refuse_existing_output(output, args.overwrite)
 
     binary = repak_binary(args.repak)
     with tempfile.TemporaryDirectory(prefix="tool-") as temp_name:
@@ -337,6 +491,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", "-o", dest="output_flag", help="same as the optional output path")
     p.add_argument("--strip-prefix", default="../../../")
     p.add_argument("--quiet", action="store_true")
+    p.add_argument("--overwrite", action="store_true", help="allow replacing an existing output")
     add_repak_common(p, aes=True)
     p.set_defaults(func=pak_unpack)
 
@@ -344,6 +499,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("source", help="unpacked PAK directory")
     p.add_argument("output", help="new PAK path")
     add_pack_options(p)
+    p.add_argument("--overwrite", action="store_true", help="allow replacing an existing output")
     add_repak_common(p)
     p.set_defaults(func=pak_repack)
 
@@ -353,6 +509,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("output", nargs="?", help="new PAK path; default: <input>.lua.pak")
     p.add_argument("--output", "-o", dest="output_flag", help="same as the optional output path")
     p.add_argument("--in-place", action="store_true", help="replace the input directly without creating a backup")
+    p.add_argument("--overwrite", action="store_true", help="allow replacing an existing non-input output")
     p.add_argument("--target-prefix", default="Script", help="directory inside the PAK for injected Lua files")
     p.add_argument("--target-file", help="target filename for one Lua source file")
     p.add_argument("--strip-prefix", default="../../../")
@@ -361,6 +518,30 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--compression", choices=["zlib", "gzip", "zstd", "lz4", "oodle"])
     add_repak_common(p, aes=True)
     p.set_defaults(func=lua_inject)
+
+    p = sub.add_parser("info", help="show safe metadata and SHA-256 for a PAK")
+    p.add_argument("pak")
+    p.add_argument("--export", help="write metadata JSON")
+    p.set_defaults(func=pak_info)
+
+    p = sub.add_parser("batch-unpack", help="unpack every .pak in a directory")
+    p.add_argument("pak_dir")
+    p.add_argument("output_dir")
+    p.add_argument("--strip-prefix", default="../../../")
+    p.add_argument("--quiet", action="store_true")
+    p.add_argument("--overwrite", action="store_true")
+    add_repak_common(p, aes=True)
+    p.set_defaults(func=batch_unpack)
+
+    p = sub.add_parser("manifest", help="create a SHA-256 manifest for a directory")
+    p.add_argument("directory")
+    p.add_argument("--output")
+    p.set_defaults(func=pak_manifest)
+
+    p = sub.add_parser("verify", help="verify a directory against its SHA-256 manifest")
+    p.add_argument("directory")
+    p.add_argument("--manifest")
+    p.set_defaults(func=pak_verify)
 
     return parser
 
@@ -417,14 +598,14 @@ def make_interactive_args(command: str) -> argparse.Namespace:
         output = ask_default("Output folder", str(pak.with_suffix("")))
         return argparse.Namespace(
             pak=str(pak), output=output, output_flag=None, strip_prefix="../../../",
-            quiet=False, repak=None, aes_key=None,
+            quiet=False, overwrite=False, repak=None, aes_key=None,
         )
     if command == "repack":
         source = choose_path("Unpacked PAK folder", directory=True)
         output = ask_default("Output PAK", str(source.with_name(source.name + ".pak")))
         return argparse.Namespace(
             source=str(source), output=output, version="v8b", compression=None,
-            mount_point="../../../", quiet=False, repak=None,
+            mount_point="../../../", quiet=False, overwrite=False, repak=None,
         )
     pak = choose_path("PAK file", ".pak")
     default_lua = storage_dir() / "lua"
@@ -435,7 +616,7 @@ def make_interactive_args(command: str) -> argparse.Namespace:
         pak=str(pak), lua_source=lua_source, output=output, output_flag=None,
         in_place=False, target_prefix=target_prefix, target_file=None,
         strip_prefix="../../../", mount_point="../../../", version="v8b",
-        compression=None, repak=None, aes_key=None,
+        compression=None, overwrite=False, repak=None, aes_key=None,
     )
 
 
@@ -546,6 +727,10 @@ def interactive_menu() -> None:
     print("2) PAK Repack")
     print("3) Lua Inject")
     print("4) Update Tool")
+    print("5) PAK Info / SHA-256")
+    print("6) Create SHA-256 Manifest")
+    print("7) Verify SHA-256 Manifest")
+    print("8) Batch Unpack All PAKs")
     print("0) Exit")
     choice = input("\nOption select karein: ").strip()
     if choice == "0":
@@ -553,6 +738,31 @@ def interactive_menu() -> None:
         return
     if choice == "4":
         update_project()
+        return
+    if choice == "5":
+        pak = choose_path("PAK file", ".pak")
+        export = input("Optional JSON export path (blank to skip): ").strip()
+        args = argparse.Namespace(pak=str(pak), export=export or None)
+        execute_with_recovery("info", pak_info, args)
+        return
+    if choice == "6":
+        directory = choose_path("Directory to manifest", directory=True)
+        execute_with_recovery("manifest", pak_manifest, argparse.Namespace(directory=str(directory), output=None))
+        return
+    if choice == "7":
+        directory = choose_path("Directory to verify", directory=True)
+        execute_with_recovery("verify", pak_verify, argparse.Namespace(directory=str(directory), manifest=None))
+        return
+    if choice == "8":
+        source_dir = choose_path("Folder containing PAK files", directory=True)
+        output_dir = Path(ask_default("Batch output folder", str(storage_dir() / "unpacked"))).expanduser()
+        if not dependency_status():
+            return
+        args = argparse.Namespace(
+            pak_dir=str(source_dir), output_dir=str(output_dir), strip_prefix="../../../",
+            quiet=False, overwrite=False, repak=None, aes_key=None,
+        )
+        execute_with_recovery("batch-unpack", batch_unpack, args)
         return
     command = {"1": "unpack", "2": "repack", "3": "inject"}.get(choice)
     if not command:
