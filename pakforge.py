@@ -38,7 +38,7 @@ except ImportError as exc:
     ) from exc
 
 APP_NAME = "PakForge"
-VERSION = "1.3.3"
+VERSION = "1.3.4"
 MANIFEST_NAME = ".pakforge-manifest.json"
 CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "pakforge"
 PROFILE_DIRECTORY = CONFIG_HOME / "profiles"
@@ -758,7 +758,7 @@ def unpack_command(args: argparse.Namespace) -> None:
     if output.exists() and any(output.iterdir()) and not args.overwrite:
         raise SystemExit(f"Output directory is not empty: {output}. Use --overwrite only after keeping a backup.")
     pak, _, _ = open_pak_auto(pak_path, args.is_od)
-    pak.dump(output)
+    pak.dump(output, workers=getattr(args, "workers", 4))
     decompile_result = None
     if getattr(args, "decompile_lua", False):
         decompile_result = decompile_extracted_lua(output)
@@ -793,6 +793,7 @@ def batch_command(args: argparse.Namespace) -> None:
             is_od=args.is_od,
             overwrite=args.overwrite,
             decompile_lua=getattr(args, "decompile_lua", False),
+            workers=getattr(args, "workers", 4),
         )
         try:
             unpack_command(child)
@@ -963,12 +964,14 @@ def repack_command(args: argparse.Namespace) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     target_prefix = normalize_target_prefix(args.target_prefix)
     if target_prefix:
-        count = repack_pak_file_full(pak, edited, output, target_path=target_prefix, force_add=True)
+        count = repack_pak_file_full(
+            pak, edited, output, target_path=target_prefix, force_add=True, workers=getattr(args, "workers", 4)
+        )
         print(f"Added/updated files under PAK path: {target_prefix}")
     elif args.full:
-        count = repack_pak_file_full(pak, edited, output)
+        count = repack_pak_file_full(pak, edited, output, workers=getattr(args, "workers", 4))
     else:
-        count = repack_pak_file_with_block_display(pak, edited, output)
+        count = repack_pak_file_with_block_display(pak, edited, output, workers=getattr(args, "workers", 4))
     if count <= 0:
         raise SystemExit("No files were repacked.")
     if args.verify:
@@ -1064,6 +1067,7 @@ def parser() -> argparse.ArgumentParser:
     unpack.add_argument("pak")
     unpack.add_argument("output", nargs="?")
     unpack.add_argument("--overwrite", action="store_true")
+    unpack.add_argument("--workers", type=int, default=4, help="parallel extraction workers (default: 4)")
     unpack.add_argument("--is-od", action="store_true")
     unpack.add_argument(
         "--decompile-lua",
@@ -1076,6 +1080,7 @@ def parser() -> argparse.ArgumentParser:
     batch.add_argument("pak_dir")
     batch.add_argument("output_dir")
     batch.add_argument("--overwrite", action="store_true")
+    batch.add_argument("--workers", type=int, default=4, help="parallel extraction workers per PAK (default: 4)")
     batch.add_argument("--is-od", action="store_true")
     batch.add_argument(
         "--decompile-lua",
@@ -1091,6 +1096,7 @@ def parser() -> argparse.ArgumentParser:
     repack.add_argument("--full", action="store_true")
     repack.add_argument("--target-prefix", help="add edited files under this relative directory inside the PAK")
     repack.add_argument("--overwrite", action="store_true")
+    repack.add_argument("--workers", type=int, default=4, help="parallel input-staging workers (default: 4)")
     repack.add_argument("--verify", action="store_true", help="reopen the output and validate its structure")
     repack.add_argument("--is-od", action="store_true")
     repack.set_defaults(func=repack_command)

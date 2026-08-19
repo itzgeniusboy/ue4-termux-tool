@@ -134,12 +134,15 @@ termux-setup-storage
 # Inspect PAK entries, compression, encryption, logical sizes, index encryption, and ZSTD dictionary usage.
 pakforge info /sdcard/Download/game.pak --export /sdcard/Download/game-info.json
 
-# Extract with a debug log and SHA-256 manifest.
+# Extract with a debug log and SHA-256 manifest (4 workers by default).
 pakforge unpack /sdcard/Download/game.pak /sdcard/Download/game-unpacked
+
+# Use one worker for low-memory devices, or increase it for fast storage.
+pakforge unpack /sdcard/Download/game.pak /sdcard/Download/game-unpacked --workers 2
 
 # Repack edited files using the source PAK template.
 pakforge repack /sdcard/Download/game.pak \
-  /sdcard/Download/game-unpacked /sdcard/Download/game-result.pak --full
+  /sdcard/Download/game-unpacked /sdcard/Download/game-result.pak --full --workers 4
 
 # Add or update files under a specific directory inside the PAK.
 pakforge repack /sdcard/Download/game.pak \
@@ -159,6 +162,8 @@ pakforge verify /sdcard/Download/game-unpacked
 ```
 
 The `--target-prefix` value must be a relative PAK directory; parent traversal is rejected. PakForge refuses to replace an existing output by default. Use `--overwrite` only after keeping a separate copy of important data. The `--is-od` option is available for OD/custom PAK handling. The original `tool` command remains available for repak-based `unpack`, `repack`, `inject`, `info`, `batch-unpack`, `manifest`, and `verify` workflows.
+
+The native `unpack` and `repack` commands accept `--workers N` (default `4`). Extraction uses atomic per-file replacement and updates the progress display from the coordinator thread. Repack stages edited input files concurrently, then keeps payload serialization single-threaded so offsets, hashes, and index order remain deterministic. If the Termux runtime cannot create a worker pool, PakForge falls back to single-threaded processing. Set `--workers 1` for the most conservative memory profile.
 
 The optional `--decompile-lua` flag searches for `unluac_patched.jar` in the repository `SOURCE` directory, beside `pakforge.py`, or the system `PATH`. Java must also be available. Each extracted `.luac` remains unchanged; PakForge writes the decompiler output as a `.lua` sibling. For Tencent-style bytecode, the first 34 bytes are preserved and the remaining bytes are nibble-swapped only when byte index 33 is greater than 2, using a temporary staging copy. Decompilation is limited to 30 seconds per file. If the JAR, Java, or a valid decompilation result is unavailable, PakForge keeps the raw `.luac` and continues unpacking.
 
@@ -364,6 +369,7 @@ The legacy `tool` wrapper retains its existing no-automatic-backup behavior. If 
 | `--in-place` | `inject` | Directly replace input without creating a backup. |
 | `--repak PATH` | PAK commands | Use a specific `repak` executable. |
 | `--overwrite` | `unpack`, `repack`, `inject`, `batch-unpack` | Explicitly allow replacing an existing output. |
+| `--workers N` | `unpack`, `repack`, `batch-unpack` | Bound parallel extraction/input staging; default `4`, use `1` for single-threaded mode. |
 | `--export PATH` | `info` | Export safe PAK metadata as JSON. |
 | `--output PATH` | `manifest` | Choose a custom manifest path. |
 | `--manifest PATH` | `verify` | Verify against a manifest stored elsewhere. |

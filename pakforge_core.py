@@ -1,6 +1,7 @@
 # PakForge parser backend. Use only with files you own or are authorized to modify.
 
 import itertools as it
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import math
 import struct
 import shutil
@@ -786,35 +787,77 @@ class TencentPakFile:
                 else:
                     self._index.update({PurePath(dir_path): e})
     
-    def _write_to_disk(self, file_path: Path, entry: TencentPakEntry) -> None:
+    def _write_to_disk(
+        self,
+        file_path: Path,
+        entry: TencentPakEntry,
+        announce: bool = True,
+    ) -> None:
+        """Extract one entry and atomically replace its destination.
+
+        The temporary file is created in the destination directory so
+        ``os.replace`` remains atomic on Termux filesystems. Decryption uses
+        the final logical path because Tencent SM4 derivation is path-based.
+        """
         encryption_method = entry.encryption_method
         compression_method = entry.compression_method
+        if announce:
+            enc_str = self._get_method_str(encryption_method, True)
+            comp_str = self._get_method_str(compression_method, False)
+            console.print(
+                f"[bold cyan]->[/] Unpack: [bold green]{file_path.name}[/] "
+                f"[[bold yellow]{comp_str}[/]/[bold magenta]{enc_str}[/]]"
+            )
 
-        enc_str = self._get_method_str(encryption_method, True)
-        comp_str = self._get_method_str(compression_method, False)
-        console.print(f"[bold cyan]->[/] Unpack: [bold green]{file_path.name}[/] [[bold yellow]{comp_str}[/]/[bold magenta]{enc_str}[/]]")
-
-        with open(file_path, 'wb') as file:
-            if compression_method == CM_NONE:
-                data = self._peek_content(entry.offset, entry.size, encryption_method)
-                if entry.encrypted:
-                    data = PakCrypto.decrypt_block(data, file_path, encryption_method)
-                file.write(data)
-                return
-            else:
-                for x in PakCrypto.generate_block_indices(len(entry.compressed_blocks), encryption_method):
-                    data = self._peek_block_content(entry.compressed_blocks[x], encryption_method)
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = file_path.with_name(
+            f".{file_path.name}.pakforge-{uuid.uuid4().hex}.tmp"
+        )
+        try:
+            with open(temporary_path, 'wb') as file:
+                if compression_method == CM_NONE:
+                    data = self._peek_content(entry.offset, entry.size, encryption_method)
                     if entry.encrypted:
                         data = PakCrypto.decrypt_block(data, file_path, encryption_method)
-                    data = PakCompression.decompress_block(data, self._zstd_dict, compression_method)
                     file.write(data)
-    
-    def dump(self, out_path: Path) -> None:
+                else:
+                    for x in PakCrypto.generate_block_indices(
+                        len(entry.compressed_blocks), encryption_method
+                    ):
+                        data = self._peek_block_content(entry.compressed_blocks[x], encryption_method)
+                        if entry.encrypted:
+                            data = PakCrypto.decrypt_block(data, file_path, encryption_method)
+                        data = PakCompression.decompress_block(
+                            data, self._zstd_dict, compression_method
+                        )
+                        file.write(data)
+            os.replace(temporary_path, file_path)
+        finally:
+            temporary_path.unlink(missing_ok=True)
+
+    def dump(self, out_path: Path, workers: int = 4) -> None:
         # Preserve the mount string in the PAK/index, but never allow its
         # leading ``..`` components to escape the chosen extraction directory.
         out_path = out_path / self._safe_mount_point_for_output(self._mount_point)
         out_path.mkdir(parents=True, exist_ok=True)
-        total_files = sum(len(d) for d in self._index.values())
+        jobs = []
+        for dir_path, dir_content in self._index.items():
+            current_out_path = out_path / dir_path
+            current_out_path.mkdir(parents=True, exist_ok=True)
+            for file_name, entry in dir_content.items():
+                jobs.append((current_out_path / file_name, entry))
+
+        total_files = len(jobs)
+        try:
+            worker_count = max(1, int(workers))
+        except (TypeError, ValueError):
+            worker_count = 4
+
+        def extract_one(job):
+            file_path, entry = job
+            self._write_to_disk(file_path, entry, announce=False)
+            return file_path
+
         with Progress(
             SpinnerColumn(),
             TextColumn("[bold cyan][UNPACK][/] {task.description}"),
@@ -824,12 +867,26 @@ class TencentPakFile:
             console=console
         ) as progress:
             task = progress.add_task("Extracting files...", total=total_files)
-            for dir_path, dir_content in self._index.items():
-                current_out_path = out_path / dir_path
-                current_out_path.mkdir(parents=True, exist_ok=True)
-                for file_name, entry in dir_content.items():
-                    self._write_to_disk(current_out_path / file_name, entry)
+            if worker_count == 1 or total_files <= 1:
+                for job in jobs:
+                    extract_one(job)
                     progress.update(task, advance=1)
+                return
+
+            try:
+                executor = ThreadPoolExecutor(max_workers=worker_count)
+            except (OSError, RuntimeError) as exc:
+                console.print(
+                    f"[bold yellow]Parallel extraction unavailable; using single-threaded mode: {exc}[/bold yellow]"
+                )
+                for job in jobs:
+                    extract_one(job)
+            else:
+                with executor:
+                    futures = [executor.submit(extract_one, job) for job in jobs]
+                    for future in as_completed(futures):
+                        future.result()
+                        progress.update(task, advance=1)
 
 def dump_unpacking_log(pak_file, output_log_path: Path):
     with open(output_log_path, 'w', encoding='utf-8') as log_file:
@@ -1011,7 +1068,43 @@ def _get_all_dirs_and_mp(pak_file):
         dirs[dp] = {r.string(): pak_file._files[~r.i4()] for _ in range(cnt)}
     return mp, dirs
 
-def repack_pak_file_full(pak_file, edited_root, output_path, target_path=None, force_add=False):
+def _stage_repack_inputs(edited: dict, workers: int = 4) -> dict[str, bytes]:
+    """Read edited files concurrently without changing repack serialization order."""
+    items = list(edited.items())
+    if not items:
+        return {}
+    try:
+        worker_count = max(1, int(workers))
+    except (TypeError, ValueError):
+        worker_count = 4
+
+    def read_one(item):
+        relative_path, (source_path, _template) = item
+        return relative_path, source_path.read_bytes()
+
+    if worker_count == 1 or len(items) <= 1:
+        return dict(read_one(item) for item in items)
+
+    try:
+        executor = ThreadPoolExecutor(max_workers=worker_count)
+    except (OSError, RuntimeError) as exc:
+        console.print(
+            f"[bold yellow]Parallel repack staging unavailable; using single-threaded mode: {exc}[/bold yellow]"
+        )
+        return dict(read_one(item) for item in items)
+
+    staged = {}
+    with executor:
+        futures = [executor.submit(read_one, item) for item in items]
+        for future in as_completed(futures):
+            relative_path, data = future.result()
+            staged[relative_path] = data
+    # Rebuild insertion order exactly as the original edited mapping. The
+    # serializer remains single-threaded, so offsets and index order are stable.
+    return {relative_path: staged[relative_path] for relative_path, _ in items}
+
+
+def repack_pak_file_full(pak_file, edited_root, output_path, target_path=None, force_add=False, workers=4):
     """
     FULL REBUILD REPACK - FIXED FOR NEW FILES (OPTION 4)
     """
@@ -1131,6 +1224,7 @@ def repack_pak_file_full(pak_file, edited_root, output_path, target_path=None, f
         return 0
 
     console.print(f'  [bold bright_cyan]📁 Files to repack: {len(edited)}[/bold bright_cyan]')
+    staged_inputs = _stage_repack_inputs(edited, workers=workers)
 
     new_files = []
     for e in pak_file._files:
@@ -1159,7 +1253,7 @@ def repack_pak_file_full(pak_file, edited_root, output_path, target_path=None, f
 
             if full_path in edited_paths:
                 p, template = edited[full_path]
-                new_raw = p.read_bytes()
+                new_raw = staged_inputs[full_path]
                 pak_rel = PurePath(full_path)
 
                 ne.compression_method = template.compression_method if template else cm
@@ -1248,7 +1342,7 @@ def repack_pak_file_full(pak_file, edited_root, output_path, target_path=None, f
             
             if not already_processed:
                 ne = _cp.copy(template)
-                new_raw = p.read_bytes()
+                new_raw = staged_inputs[fp]
                 pak_rel = PurePath(fp)
                 
                 ne.compression_method = template.compression_method
@@ -1534,7 +1628,7 @@ def smart_resolve_by_fingerprint(filename: str, repack_file: Path, candidates: l
         return final_matches[0]
     return None
 
-def repack_pak_file_with_block_display(pak_file, edited_root: Path, output_path: Path):
+def repack_pak_file_with_block_display(pak_file, edited_root: Path, output_path: Path, workers: int = 4):
     """Original repack with simple block display - WORKING"""
     shutil.copy2(pak_file._file_path, output_path)
     
@@ -1575,6 +1669,7 @@ def repack_pak_file_with_block_display(pak_file, edited_root: Path, output_path:
         return
     
     total_files = len(edited)
+    staged_inputs = _stage_repack_inputs(edited, workers=workers)
     display = SimpleBlockDisplay(total_files, pak_file._file_path.name)
     
     with open(output_path, 'r+b') as outfh:
@@ -1583,7 +1678,7 @@ def repack_pak_file_with_block_display(pak_file, edited_root: Path, output_path:
             total_blocks = len(entry.compressed_blocks) if entry.compressed_blocks else 1
             
             display.start_file(file_name, total_blocks)
-            new_data = p.read_bytes()
+            new_data = staged_inputs[full_path]
             pak_rel = PurePath(full_path)
             
             if entry.compression_method == CM_NONE:

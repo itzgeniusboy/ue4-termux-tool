@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pakforge
+import pakforge_core
 from pakforge_core import (
     TencentPakFile,
     calculate_tencent_hashes,
@@ -49,6 +50,31 @@ def main() -> None:
     ])
     assert parsed.target_prefix == "Content/Lua"
     assert parsed.verify is True
+    assert parsed.workers == 4
+    unpack_parsed = pakforge.parser().parse_args(["unpack", "source.pak", "out", "--workers", "2"])
+    assert unpack_parsed.workers == 2
+    repack_parsed = pakforge.parser().parse_args(["repack", "source.pak", "edited", "out.pak", "--workers", "3"])
+    assert repack_parsed.workers == 3
+
+    with tempfile.TemporaryDirectory(prefix="pakforge-workers-") as staging_dir:
+        root = Path(staging_dir)
+        first = root / "first.bin"
+        second = root / "second.bin"
+        first.write_bytes(b"first-data")
+        second.write_bytes(b"second-data")
+        edited_inputs = {
+            "Content/first.bin": (first, None),
+            "Content/second.bin": (second, None),
+        }
+        staged = pakforge_core._stage_repack_inputs(edited_inputs, workers=2)
+        assert list(staged) == list(edited_inputs)
+        assert staged["Content/first.bin"] == b"first-data"
+        assert staged["Content/second.bin"] == b"second-data"
+        with patch.object(
+            pakforge_core, "ThreadPoolExecutor", side_effect=RuntimeError("threads unavailable")
+        ):
+            fallback = pakforge_core._stage_repack_inputs(edited_inputs, workers=4)
+        assert fallback == staged
 
     raw = b"offline-pakforge-fixture"
     hashes = calculate_tencent_hashes(raw, r"Content\Lua\MyMod.lua", 12)
@@ -167,7 +193,7 @@ def main() -> None:
 
     version = run("--version")
     assert version.returncode == 0
-    assert version.stdout.strip() == "PakForge 1.3.3"
+    assert version.stdout.strip() == "PakForge 1.3.4"
 
     with tempfile.TemporaryDirectory(prefix="pakforge-test-") as raw:
         root = Path(raw)
