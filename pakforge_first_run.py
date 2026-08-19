@@ -77,6 +77,8 @@ def show_status(status: dict, tick: int = 0) -> None:
     eta = status.get("eta_seconds")
     downloaded = status.get("downloaded_bytes")
     download_total = status.get("download_total_bytes")
+    updated_at = status.get("updated_at", status.get("updated", "calculating"))
+    heartbeat = status.get("heartbeat_count", tick)
     spinner = SPINNER[tick % len(SPINNER)]
     plain = os.environ.get("PAKFORGE_PLAIN") == "1" or os.environ.get("NO_COLOR") == "1"
     if plain:
@@ -90,13 +92,14 @@ def show_status(status: dict, tick: int = 0) -> None:
     print(f"{clear}PakForge Launcher — OPEN")
     print("========================")
     print("Full PakForge menu is preparing automatically; no second command is needed.")
-    print(f"{spinner} {percent:3d}% complete  |  {remaining:3d}% remaining")
+    print(f"{spinner} {percent:3d}% stage estimate  |  {remaining:3d}% remaining")
     print(f"{progress_bar(percent)}  {percent:3d}%")
     print(f"{accent}Stage {stage_index}/{stage_total}:{reset} {stage}")
     print(f"State: {state}")
+    print(f"Heartbeat: #{heartbeat}  |  Last update: {updated_at}")
     print(f"Elapsed: {format_seconds(elapsed)}  |  ETA: {format_seconds(eta)}")
     print(f"Download: {format_bytes(downloaded)} / {format_bytes(download_total)}")
-    print("Note: package managers may not expose exact total download size.")
+    print("Note: the percentage is a stage estimate; package managers may not expose exact byte totals.")
     print(f"Log:   {LOG_FILE}")
     if status.get("error"):
         print(f"Error: {status['error']}")

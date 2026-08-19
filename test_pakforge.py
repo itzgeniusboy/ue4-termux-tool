@@ -74,6 +74,10 @@ def main() -> None:
         assert setup_payload["percent"] == 0
         assert setup_payload["remaining_percent"] == 100
         assert setup_payload["stage_total"] == 4
+        assert setup_payload["heartbeat_count"] == 0
+        assert setup_payload["updated_at"] is None
+        assert setup_payload["downloaded_bytes"] is None
+        assert setup_payload["download_total_bytes"] is None
     patch_parsed = pakforge.parser().parse_args(["repack", "source.pak", "edited", "out.pak", "--patch", "--verify"])
     assert patch_parsed.patch is True
     assert patch_parsed.verify is True

@@ -30,6 +30,7 @@ MODULES = {
 
 SETUP_STAGE_TOTAL = 4
 STARTED_EPOCH = time.time()
+HEARTBEAT_COUNT = 0
 
 
 def _status() -> dict:
@@ -46,7 +47,9 @@ def _status() -> dict:
 
 
 def _write_status(state: str, **extra: object) -> None:
+    global HEARTBEAT_COUNT
     STATE_DIR.mkdir(parents=True, exist_ok=True)
+    HEARTBEAT_COUNT += 1
     payload = _status()
     if "percent" not in extra:
         extra["percent"] = 100 if state == "ready" else 0
@@ -54,6 +57,8 @@ def _write_status(state: str, **extra: object) -> None:
     elapsed = max(0, int(time.time() - STARTED_EPOCH))
     percent = int(extra["percent"])
     extra.setdefault("elapsed_seconds", elapsed)
+    extra.setdefault("heartbeat_count", HEARTBEAT_COUNT)
+    extra.setdefault("updated_at", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
     if 0 < percent < 100 and elapsed > 0:
         extra.setdefault("eta_seconds", elapsed * (100 - percent) // percent)
     else:
@@ -176,6 +181,8 @@ def main(argv: list[str]) -> int:
                 "eta_seconds": None,
                 "downloaded_bytes": None,
                 "download_total_bytes": None,
+                "heartbeat_count": 0,
+                "updated_at": None,
             })
         print(json.dumps(payload, indent=2))
         return 0

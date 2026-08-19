@@ -11,6 +11,7 @@ BOOTSTRAP_LOCK="$STATE_DIR/bootstrap.lock"
 STAGE_TOTAL=5
 STARTED_EPOCH="$(date +%s)"
 STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+HEARTBEAT_COUNT=0
 
 if [ "${PAKFORGE_PLAIN:-0}" = "1" ] || [ "${NO_COLOR:-0}" = "1" ]; then
   PINK=""; CYAN=""; GREEN=""; YELLOW=""; RESET=""
@@ -27,6 +28,8 @@ write_status() {
   local stage_index="${4:-0}"
   local stage="${5:-Starting}"
   local remaining=$((100 - percent))
+  HEARTBEAT_COUNT=$((HEARTBEAT_COUNT + 1))
+  local updated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   local elapsed=$(( $(date +%s) - STARTED_EPOCH ))
   local eta_seconds=null
   local project_bytes=0
@@ -38,9 +41,9 @@ write_status() {
     project_bytes="${project_bytes:-0}"
   fi
   local status_tmp="$BOOTSTRAP_STATUS.tmp.$$"
-  printf '{"state":"%s","stage":"%s","stage_index":%s,"stage_total":%s,"percent":%s,"remaining_percent":%s,"started_at":"%s","started_epoch":%s,"elapsed_seconds":%s,"eta_seconds":%s,"downloaded_bytes":%s,"download_total_bytes":null,"message":"%s","log":"%s"}\n' \
-    "$state" "$stage" "$stage_index" "$STAGE_TOTAL" "$percent" "$remaining" "$STARTED_AT" "$STARTED_EPOCH" "$elapsed" "$eta_seconds" "$project_bytes" \
-    "${message//\"/\\\"}" "${BOOTSTRAP_LOG//\"/\\\"}" > "$status_tmp"
+  printf '{"state":"%s","stage":"%s","stage_index":%s,"stage_total":%s,"percent":%s,"remaining_percent":%s,"started_at":"%s","started_epoch":%s,"updated_at":"%s","elapsed_seconds":%s,"eta_seconds":%s,"heartbeat_count":%s,"downloaded_bytes":%s,"download_total_bytes":null,"message":"%s","activity":"%s","log":"%s"}\n' \
+    "$state" "$stage" "$stage_index" "$STAGE_TOTAL" "$percent" "$remaining" "$STARTED_AT" "$STARTED_EPOCH" "$updated_at" "$elapsed" "$eta_seconds" "$HEARTBEAT_COUNT" "$project_bytes" \
+    "${message//\"/\\\"}" "${stage//\"/\\\"}" "${BOOTSTRAP_LOG//\"/\\\"}" > "$status_tmp"
   mv -f "$status_tmp" "$BOOTSTRAP_STATUS"
 }
 
@@ -89,7 +92,7 @@ format_bytes() {
 }
 
 show_first_run() {
-  local percent remaining stage state spinner elapsed eta downloaded total
+  local percent remaining stage state spinner elapsed eta downloaded total updated_at heartbeat
   percent="$(sed -n 's/.*\"percent\":\([0-9]*\).*/\1/p' "$BOOTSTRAP_STATUS" 2>/dev/null | head -n 1)"
   remaining="$(sed -n 's/.*\"remaining_percent\":\([0-9]*\).*/\1/p' "$BOOTSTRAP_STATUS" 2>/dev/null | head -n 1)"
   stage="$(sed -n 's/.*\"stage\":\"\([^\"]*\)\".*/\1/p' "$BOOTSTRAP_STATUS" 2>/dev/null | head -n 1)"
@@ -98,6 +101,8 @@ show_first_run() {
   eta="$(sed -n 's/.*\"eta_seconds\":\([^,]*\).*/\1/p' "$BOOTSTRAP_STATUS" 2>/dev/null | head -n 1)"
   downloaded="$(sed -n 's/.*\"downloaded_bytes\":\([0-9]*\).*/\1/p' "$BOOTSTRAP_STATUS" 2>/dev/null | head -n 1)"
   total="$(sed -n 's/.*\"download_total_bytes\":\([^,]*\).*/\1/p' "$BOOTSTRAP_STATUS" 2>/dev/null | head -n 1)"
+  updated_at="$(sed -n 's/.*\"updated_at\":\"\([^\"]*\)\".*/\1/p' "$BOOTSTRAP_STATUS" 2>/dev/null | head -n 1)"
+  heartbeat="$(sed -n 's/.*\"heartbeat_count\":\([0-9]*\).*/\1/p' "$BOOTSTRAP_STATUS" 2>/dev/null | head -n 1)"
   percent="${percent:-0}"
   remaining="${remaining:-100}"
   stage="${stage:-Starting}"
@@ -106,6 +111,8 @@ show_first_run() {
   eta="${eta:-null}"
   downloaded="${downloaded:-0}"
   total="${total:-null}"
+  updated_at="${updated_at:-calculating}"
+  heartbeat="${heartbeat:-0}"
   spinner='|'
   case $(( $(date +%s) % 4 )) in
     1) spinner='/' ;;
@@ -116,12 +123,13 @@ show_first_run() {
   printf '%bPakForge Launcher — OPEN%b\n' "$PINK" "$RESET"
   printf '%bFull PakForge menu is preparing automatically.%b\n\n' "$CYAN" "$RESET"
   printf 'This launcher is active now; no second command is needed.\n'
-  printf '%s %3s%% complete  |  %3s%% remaining  |  %s\n' "$spinner" "$percent" "$remaining" "$stage"
+  printf '%s %3s%% stage estimate  |  %3s%% remaining  |  %s\n' "$spinner" "$percent" "$remaining" "$stage"
   progress_bar "$percent"
   printf '  %3s%%\n\n' "$percent"
   printf 'Minimum runtime and PakForge files are being prepared.\n'
   printf 'Python packages, Lua 5.1, and repak will continue after launch.\n\n'
   printf '%bState:%b %s\n' "$CYAN" "$RESET" "$state"
+  printf 'Heartbeat: #%s  |  Last update: %s\n' "$heartbeat" "$updated_at"
   printf 'Elapsed: %s  |  ETA: %s\n' "$(format_seconds "$elapsed")" "$(format_seconds "$eta")"
   printf 'Download: %s / %s\n' "$(format_bytes "$downloaded")" "$(format_bytes "$total")"
   printf 'Note: package managers may not expose exact total download size.\n'
