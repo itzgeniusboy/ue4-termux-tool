@@ -41,6 +41,31 @@ def progress_bar(percent: int, width: int = 28) -> str:
     return "[" + "#" * filled + "-" * (width - filled) + "]"
 
 
+def format_seconds(value: object) -> str:
+    if value in (None, "", "null", "unknown"):
+        return "calculating"
+    try:
+        total = max(0, int(value))
+    except (TypeError, ValueError):
+        return "calculating"
+    return f"{total // 3600:02d}:{(total % 3600) // 60:02d}:{total % 60:02d}"
+
+
+def format_bytes(value: object) -> str:
+    if value in (None, "", "null", "unknown"):
+        return "unavailable"
+    try:
+        amount = float(value)
+    except (TypeError, ValueError):
+        return "unavailable"
+    units = ("B", "KB", "MB", "GB", "TB")
+    index = 0
+    while amount >= 1024 and index < len(units) - 1:
+        amount /= 1024
+        index += 1
+    return f"{amount:.2f} {units[index]}"
+
+
 def show_status(status: dict, tick: int = 0) -> None:
     percent = _number(status, "percent", 0)
     remaining = _number(status, "remaining_percent", 100 - percent)
@@ -48,6 +73,10 @@ def show_status(status: dict, tick: int = 0) -> None:
     state = str(status.get("state", "starting"))
     stage_index = status.get("stage_index", 0)
     stage_total = status.get("stage_total", 4)
+    elapsed = status.get("elapsed_seconds", 0)
+    eta = status.get("eta_seconds")
+    downloaded = status.get("downloaded_bytes")
+    download_total = status.get("download_total_bytes")
     spinner = SPINNER[tick % len(SPINNER)]
     plain = os.environ.get("PAKFORGE_PLAIN") == "1" or os.environ.get("NO_COLOR") == "1"
     if plain:
@@ -65,6 +94,9 @@ def show_status(status: dict, tick: int = 0) -> None:
     print(f"{progress_bar(percent)}  {percent:3d}%")
     print(f"{accent}Stage {stage_index}/{stage_total}:{reset} {stage}")
     print(f"State: {state}")
+    print(f"Elapsed: {format_seconds(elapsed)}  |  ETA: {format_seconds(eta)}")
+    print(f"Download: {format_bytes(downloaded)} / {format_bytes(download_total)}")
+    print("Note: package managers may not expose exact total download size.")
     print(f"Log:   {LOG_FILE}")
     if status.get("error"):
         print(f"Error: {status['error']}")

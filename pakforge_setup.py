@@ -29,6 +29,7 @@ MODULES = {
 }
 
 SETUP_STAGE_TOTAL = 4
+STARTED_EPOCH = time.time()
 
 
 def _status() -> dict:
@@ -50,6 +51,15 @@ def _write_status(state: str, **extra: object) -> None:
     if "percent" not in extra:
         extra["percent"] = 100 if state == "ready" else 0
     extra["remaining_percent"] = max(0, 100 - int(extra["percent"]))
+    elapsed = max(0, int(time.time() - STARTED_EPOCH))
+    percent = int(extra["percent"])
+    extra.setdefault("elapsed_seconds", elapsed)
+    if 0 < percent < 100 and elapsed > 0:
+        extra.setdefault("eta_seconds", elapsed * (100 - percent) // percent)
+    else:
+        extra.setdefault("eta_seconds", None)
+    extra.setdefault("downloaded_bytes", None)
+    extra.setdefault("download_total_bytes", None)
     extra.setdefault("stage", "Complete" if state == "ready" else "Starting")
     extra.setdefault("stage_index", SETUP_STAGE_TOTAL if state == "ready" else 0)
     extra.setdefault("stage_total", SETUP_STAGE_TOTAL)
@@ -162,6 +172,10 @@ def main(argv: list[str]) -> int:
                 "stage_total": SETUP_STAGE_TOTAL,
                 "percent": 0,
                 "remaining_percent": 100,
+                "elapsed_seconds": 0,
+                "eta_seconds": None,
+                "downloaded_bytes": None,
+                "download_total_bytes": None,
             })
         print(json.dumps(payload, indent=2))
         return 0

@@ -9,6 +9,8 @@ BOOTSTRAP_STATUS="$STATE_DIR/bootstrap-status.json"
 BOOTSTRAP_LOG="$STATE_DIR/bootstrap.log"
 BOOTSTRAP_LOCK="$STATE_DIR/bootstrap.lock"
 STAGE_TOTAL=5
+STARTED_EPOCH="$(date +%s)"
+STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 if [ "${PAKFORGE_PLAIN:-0}" = "1" ] || [ "${NO_COLOR:-0}" = "1" ]; then
   PINK=""; CYAN=""; GREEN=""; YELLOW=""; RESET=""
@@ -25,8 +27,18 @@ write_status() {
   local stage_index="${4:-0}"
   local stage="${5:-Starting}"
   local remaining=$((100 - percent))
-  printf '{"state":"%s","stage":"%s","stage_index":%s,"stage_total":%s,"percent":%s,"remaining_percent":%s,"message":"%s","log":"%s"}\n' \
-    "$state" "$stage" "$stage_index" "$STAGE_TOTAL" "$percent" "$remaining" \
+  local elapsed=$(( $(date +%s) - STARTED_EPOCH ))
+  local eta_seconds=null
+  local project_bytes=0
+  if [ "$percent" -gt 0 ] && [ "$percent" -lt 100 ] && [ "$elapsed" -gt 0 ]; then
+    eta_seconds=$(( elapsed * (100 - percent) / percent ))
+  fi
+  if [ -d "$PROJECT" ]; then
+    project_bytes="$(du -sk "$PROJECT" 2>/dev/null | awk 'NR == 1 {print $1 * 1024}' || printf '0')"
+    project_bytes="${project_bytes:-0}"
+  fi
+  printf '{"state":"%s","stage":"%s","stage_index":%s,"stage_total":%s,"percent":%s,"remaining_percent":%s,"started_at":"%s","started_epoch":%s,"elapsed_seconds":%s,"eta_seconds":%s,"downloaded_bytes":%s,"download_total_bytes":null,"message":"%s","log":"%s"}\n' \
+    "$state" "$stage" "$stage_index" "$STAGE_TOTAL" "$percent" "$remaining" "$STARTED_AT" "$STARTED_EPOCH" "$elapsed" "$eta_seconds" "$project_bytes" \
     "${message//\"/\\\"}" "${BOOTSTRAP_LOG//\"/\\\"}" > "$BOOTSTRAP_STATUS"
 }
 
@@ -56,16 +68,42 @@ progress_bar() {
   printf ']'
 }
 
+format_seconds() {
+  local total="${1:-0}"
+  if [ "$total" = "null" ] || [ -z "$total" ]; then
+    printf '%s' 'calculating'
+    return
+  fi
+  printf '%02d:%02d:%02d' $((total / 3600)) $(((total % 3600) / 60)) $((total % 60))
+}
+
+format_bytes() {
+  local bytes="${1:-0}"
+  if [ "$bytes" = "null" ] || [ -z "$bytes" ]; then
+    printf '%s' 'calculating'
+    return
+  fi
+  awk -v bytes="$bytes" 'BEGIN { if (bytes < 1024) printf "%.0f B", bytes; else if (bytes < 1048576) printf "%.1f KB", bytes/1024; else if (bytes < 1073741824) printf "%.1f MB", bytes/1048576; else printf "%.2f GB", bytes/1073741824 }'
+}
+
 show_first_run() {
-  local percent remaining stage state spinner
+  local percent remaining stage state spinner elapsed eta downloaded total
   percent="$(sed -n 's/.*\"percent\":\([0-9]*\).*/\1/p' "$BOOTSTRAP_STATUS" 2>/dev/null | head -n 1)"
   remaining="$(sed -n 's/.*\"remaining_percent\":\([0-9]*\).*/\1/p' "$BOOTSTRAP_STATUS" 2>/dev/null | head -n 1)"
   stage="$(sed -n 's/.*\"stage\":\"\([^\"]*\)\".*/\1/p' "$BOOTSTRAP_STATUS" 2>/dev/null | head -n 1)"
   state="$(sed -n 's/.*\"state\":\"\([^\"]*\)\".*/\1/p' "$BOOTSTRAP_STATUS" 2>/dev/null | head -n 1)"
+  elapsed="$(sed -n 's/.*\"elapsed_seconds\":\([0-9]*\).*/\1/p' "$BOOTSTRAP_STATUS" 2>/dev/null | head -n 1)"
+  eta="$(sed -n 's/.*\"eta_seconds\":\([^,]*\).*/\1/p' "$BOOTSTRAP_STATUS" 2>/dev/null | head -n 1)"
+  downloaded="$(sed -n 's/.*\"downloaded_bytes\":\([0-9]*\).*/\1/p' "$BOOTSTRAP_STATUS" 2>/dev/null | head -n 1)"
+  total="$(sed -n 's/.*\"download_total_bytes\":\([^,]*\).*/\1/p' "$BOOTSTRAP_STATUS" 2>/dev/null | head -n 1)"
   percent="${percent:-0}"
   remaining="${remaining:-100}"
   stage="${stage:-Starting}"
   state="${state:-starting}"
+  elapsed="${elapsed:-0}"
+  eta="${eta:-null}"
+  downloaded="${downloaded:-0}"
+  total="${total:-null}"
   spinner='|'
   case $(( $(date +%s) % 4 )) in
     1) spinner='/' ;;
@@ -82,6 +120,9 @@ show_first_run() {
   printf 'Minimum runtime and PakForge files are being prepared.\n'
   printf 'Python packages, Lua 5.1, and repak will continue after launch.\n\n'
   printf '%bState:%b %s\n' "$CYAN" "$RESET" "$state"
+  printf 'Elapsed: %s  |  ETA: %s\n' "$(format_seconds "$elapsed")" "$(format_seconds "$eta")"
+  printf 'Download: %s / %s\n' "$(format_bytes "$downloaded")" "$(format_bytes "$total")"
+  printf 'Note: package managers may not expose exact total download size.\n'
   printf 'Log: %s\n' "$BOOTSTRAP_LOG"
   printf 'The full PAK/Lua menu will open automatically when ready.\n'
 }
@@ -124,6 +165,31 @@ if ! command -v pkg >/dev/null 2>&1; then
   fail "Run this command inside Termux so pkg can prepare the minimum runtime."
 fi
 
+lock_is_live() {
+  local pid=""
+  if [ -f "$BOOTSTRAP_LOCK/pid" ]; then
+    pid="$(cat "$BOOTSTRAP_LOCK/pid" 2>/dev/null || true)"
+  fi
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+lock_is_stale() {
+  local pid="" mtime="" age=0
+  if [ -f "$BOOTSTRAP_LOCK/pid" ]; then
+    pid="$(cat "$BOOTSTRAP_LOCK/pid" 2>/dev/null || true)"
+    [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null && return 0
+    return 1
+  fi
+  mtime="$(stat -c %Y "$BOOTSTRAP_LOCK" 2>/dev/null || stat -f %m "$BOOTSTRAP_LOCK" 2>/dev/null || printf '0')"
+  age=$(( $(date +%s) - ${mtime:-0} ))
+  [ "$age" -gt 1800 ]
+}
+
+if [ -d "$BOOTSTRAP_LOCK" ] && lock_is_stale; then
+  printf '%s\n' 'Removing stale PakForge bootstrap lock and recovering setup.' >> "$BOOTSTRAP_LOG"
+  rm -rf "$BOOTSTRAP_LOCK"
+fi
+
 if mkdir "$BOOTSTRAP_LOCK" 2>/dev/null; then
   write_status starting "Starting background bootstrap" 0 0 "Starting bootstrap"
   (
@@ -133,8 +199,13 @@ if mkdir "$BOOTSTRAP_LOCK" 2>/dev/null; then
       exit 1
     fi
   ) &
+  BOOTSTRAP_PID=$!
+  printf '%s\n' "$BOOTSTRAP_PID" > "$BOOTSTRAP_LOCK/pid"
 else
-  write_status running "An existing bootstrap is already running" 0 0 "Existing bootstrap is running"
+  if lock_is_stale; then
+    rm -rf "$BOOTSTRAP_LOCK"
+    exec "$0" "$@"
+  fi
 fi
 
 while true; do
