@@ -356,10 +356,29 @@ def run_repak(binary: str, aes_key: str | None, args: list[str]) -> None:
     display_command += args
     print("$ " + " ".join(subprocess.list2cmdline([part]) for part in display_command))
     try:
-        completed = subprocess.run(command, check=False)
+        completed = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
     except OSError as exc:
         fail(f"could not execute repak: {exc}")
+
+    if completed.stdout.strip():
+        print(completed.stdout.rstrip())
     if completed.returncode != 0:
+        detail = (completed.stderr.strip() or completed.stdout.strip()).strip()
+        if detail:
+            # Keep the terminal message useful without flooding Termux; the
+            # complete sanitized diagnostic is written by the recovery layer.
+            detail = detail[-2400:]
+            fail(
+                f"repak failed with exit code {completed.returncode}: {detail}",
+                completed.returncode,
+            )
         fail(f"repak failed with exit code {completed.returncode}", completed.returncode)
 
 

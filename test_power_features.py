@@ -83,4 +83,20 @@ else:
     assert (batch_out / "one" / "file.txt").exists()
     assert (batch_out / "two" / "file.txt").exists()
 
+    failing_repak = base / "failing-repak"
+    failing_repak.write_text(
+        "#!/usr/bin/env python3\nimport sys\nprint('synthetic repak failure: invalid PAK index', file=sys.stderr)\nsys.exit(1)\n",
+        encoding="utf-8",
+    )
+    failing_repak.chmod(failing_repak.stat().st_mode | stat.S_IXUSR)
+    failed = subprocess.run(
+        [sys.executable, str(TOOL), "unpack", str(pak_dir / "one.pak"), str(base / "failed-out"), "--repak", str(failing_repak)],
+        check=False,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert failed.returncode == 1
+    assert "synthetic repak failure: invalid PAK index" in failed.stderr
+
 print("power-feature-tests-ok")
