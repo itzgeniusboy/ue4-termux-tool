@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -64,6 +65,25 @@ def main() -> None:
         tampered = run("verify", str(root))
         assert tampered.returncode == 2
         assert "CHANGED" in tampered.stdout
+
+        invalid = root / "invalid.pak"
+        invalid.write_bytes(b"not-a-valid-pak")
+        state = root / "state"
+        failure = subprocess.run(
+            [sys.executable, str(PAKFORGE), "info", str(invalid)],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            env={**os.environ, "XDG_STATE_HOME": str(state)},
+            check=False,
+        )
+        assert failure.returncode == 1
+        assert "Operation log saved locally:" in failure.stderr
+        native_logs = list((state / "pakforge" / "logs").glob("operation-*.jsonl"))
+        assert native_logs
+        native_log = native_logs[0].read_text(encoding="utf-8")
+        assert "unexpected_exception" in native_log
+        assert "unpack_from" in native_log
 
     print("pakforge-tests-ok")
 

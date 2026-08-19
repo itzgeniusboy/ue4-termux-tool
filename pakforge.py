@@ -10,8 +10,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import re
 import sys
 import time
+import traceback
 from pathlib import Path, PurePath
 
 try:
@@ -31,6 +34,75 @@ except ImportError as exc:
 APP_NAME = "PakForge"
 VERSION = "1.1.0"
 MANIFEST_NAME = ".pakforge-manifest.json"
+
+
+def native_log_directory() -> Path:
+    return Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "pakforge" / "logs"
+
+
+class NativeOperationLog:
+    """Local JSONL operation log for the native PakForge CLI."""
+
+    def __init__(self, command: str, args: argparse.Namespace):
+        self.path: Path | None = None
+        self.handle = None
+        try:
+            root = native_log_directory()
+            root.mkdir(parents=True, exist_ok=True)
+            stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+            self.path = root / f"operation-{stamp}-{os.getpid()}.jsonl"
+            self.handle = self.path.open("a", encoding="utf-8")
+            arguments = {}
+            for key, value in vars(args).items():
+                if key == "func":
+                    continue
+                if re.search(r"(?:aes|api|access|auth|private|secret|token|password|key)", key, re.IGNORECASE):
+                    arguments[key] = "<redacted>"
+                else:
+                    arguments[key] = str(value)
+            self.event("operation_started", command=command, arguments=arguments, version=VERSION, python=sys.version.split()[0], termux=bool(os.environ.get("PREFIX")))
+        except OSError:
+            self.path = None
+            self.handle = None
+
+    def event(self, name: str, **fields: object) -> None:
+        if self.handle is None:
+            return
+        text_fields = {}
+        for key, value in fields.items():
+            text = str(value)
+            text = re.sub(r"(--aes-key(?:=|\s+))([^\s]+)", r"\1<redacted>", text, flags=re.IGNORECASE)
+            text_fields[key] = text if len(text) <= 6000 else text[-6000:]
+        record = {"time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "event": name, **text_fields}
+        try:
+            self.handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+            self.handle.flush()
+        except OSError:
+            pass
+
+    def close(self) -> None:
+        if self.handle is not None:
+            try:
+                self.handle.close()
+            except OSError:
+                pass
+            self.handle = None
+
+
+def show_native_logs(args: argparse.Namespace) -> None:
+    root = native_log_directory()
+    logs = sorted(root.glob("operation-*.jsonl")) if root.is_dir() else []
+    print(f"Log directory: {root}")
+    if not logs:
+        print("No operation logs found yet.")
+        return
+    for path in logs[-max(1, args.limit):]:
+        print(path)
+    if args.tail:
+        latest = logs[-1]
+        lines = latest.read_text(encoding="utf-8", errors="replace").splitlines()
+        print(f"\n--- latest log: {latest} ---")
+        print("\n".join(lines[-args.tail:]))
 
 
 def require_file(value: str | Path, label: str) -> Path:
@@ -294,16 +366,44 @@ def parser() -> argparse.ArgumentParser:
     verify.add_argument("directory")
     verify.add_argument("--manifest")
     verify.set_defaults(func=verify_command)
+
+    logs = sub.add_parser("logs", help="list structured PakForge operation logs")
+    logs.add_argument("--limit", type=int, default=10)
+    logs.add_argument("--tail", type=int, default=0)
+    logs.set_defaults(func=show_native_logs)
     return cli
 
 
 def main() -> int:
     args = parser().parse_args()
-    if args.command in (None, "menu"):
-        main_menu()
+    if args.command == "logs":
+        args.func(args)
         return 0
-    args.func(args)
-    return 0
+    operation = NativeOperationLog(args.command or "menu", args)
+    try:
+        if args.command in (None, "menu"):
+            operation.event("menu_started")
+            main_menu()
+            operation.event("operation_succeeded")
+            return 0
+        operation.event("handler_started", handler=getattr(args.func, "__name__", str(args.func)))
+        args.func(args)
+        operation.event("operation_succeeded")
+        return 0
+    except SystemExit as exc:
+        code = exc.code if isinstance(exc.code, int) else 1
+        if code:
+            operation.event("operation_failed", exit_code=code, error=str(exc), traceback=traceback.format_exc())
+            print(f"Operation log saved locally: {operation.path}", file=sys.stderr)
+        raise
+    except Exception as exc:
+        operation.event("unexpected_exception", exit_code=1, error=f"{type(exc).__name__}: {exc}", traceback=traceback.format_exc())
+        print(f"{APP_NAME}: unexpected error: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(f"Operation log saved locally: {operation.path}", file=sys.stderr)
+        return 1
+    finally:
+        operation.event("operation_finished")
+        operation.close()
 
 
 if __name__ == "__main__":

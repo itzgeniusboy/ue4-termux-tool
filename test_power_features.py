@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 
-from ue4tool import ToolError, create_manifest, pak_info, verify_manifest, refuse_existing_output
+from ue4tool import OperationLog, ToolError, create_manifest, pak_info, verify_manifest, refuse_existing_output
 
 ROOT = Path(__file__).resolve().parent
 TOOL = ROOT / "ue4tool.py"
@@ -98,5 +98,28 @@ else:
     )
     assert failed.returncode == 1
     assert "synthetic repak failure: invalid PAK index" in failed.stderr
+
+    previous_state = os.environ.get("XDG_STATE_HOME")
+    os.environ["XDG_STATE_HOME"] = str(base / "state")
+    operation_log = OperationLog("logging-test", type("Args", (), {"aes_key": "super-secret", "source": str(pak)})())
+    assert operation_log.path is not None
+    operation_log.event("sample_failure", stderr="aes_key=super-secret")
+    log_path = operation_log.path
+    operation_log.close()
+    log_text = log_path.read_text(encoding="utf-8")
+    assert "super-secret" not in log_text
+    assert "<redacted>" in log_text
+    listed = subprocess.run(
+        [sys.executable, str(TOOL), "logs", "--limit", "2", "--tail", "2"],
+        check=True,
+        env={**env, "XDG_STATE_HOME": str(base / "state")},
+        capture_output=True,
+        text=True,
+    )
+    assert str(log_path) in listed.stdout
+    if previous_state is None:
+        os.environ.pop("XDG_STATE_HOME", None)
+    else:
+        os.environ["XDG_STATE_HOME"] = previous_state
 
 print("power-feature-tests-ok")

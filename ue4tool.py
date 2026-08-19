@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 from urllib import request as urlrequest
 from urllib import error as urlerror
 from urllib.parse import urlparse
@@ -29,6 +30,107 @@ DOWNLOAD_DIR = Path("/sdcard/Download")
 REPORT_ENDPOINT_ENV = "UE4TOOL_REPORT_ENDPOINT"
 REPORT_ENDPOINT_DEFAULT = "https://ue4bugrelay-vlych7sk.manus.space/api/report"
 DEFAULT_UPDATE_INTERVAL_SECONDS = 6 * 60 * 60
+LOG_DIRECTORY_NAME = "logs"
+MAX_LOG_TEXT = 6000
+_ACTIVE_LOG = None
+
+
+_SECRET_PATTERN = re.compile(r"(--aes-key(?:=|\s+))([^\s]+)|((?:aes[_ -]?key\s*[:=]\s*))([^\s,;]+)", re.IGNORECASE)
+
+
+def redact_sensitive_text(value: str) -> str:
+    """Redact AES keys from local logs while retaining useful command context."""
+    value = str(value)
+    return _SECRET_PATTERN.sub(lambda match: f"{match.group(1) or match.group(3)}<redacted>", value)
+
+
+def redact_field(key: str, value: object) -> str:
+    if re.search(r"(?:aes|api|access|auth|private|secret|token|password|key)", key, re.IGNORECASE):
+        return "<redacted>"
+    return redact_sensitive_text(str(value))
+
+
+def log_directory() -> Path:
+    return Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / APP_NAME / LOG_DIRECTORY_NAME
+
+
+def _log_text(value: object, limit: int = MAX_LOG_TEXT) -> str:
+    text = redact_sensitive_text(str(value))
+    return text if len(text) <= limit else text[-limit:]
+
+
+class OperationLog:
+    """Append-only structured operation log; logging failures never break the tool."""
+
+    def __init__(self, command: str, args: argparse.Namespace | None = None):
+        self.path: Path | None = None
+        self._handle = None
+        try:
+            root = log_directory()
+            root.mkdir(parents=True, exist_ok=True)
+            stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+            self.path = root / f"operation-{stamp}-{os.getpid()}.jsonl"
+            self._handle = self.path.open("a", encoding="utf-8")
+            try:
+                raw_arguments = vars(args) if args is not None else {}
+            except TypeError:
+                raw_arguments = {}
+            self.event(
+                "operation_started",
+                command=command,
+                arguments={key: redact_field(key, value) for key, value in raw_arguments.items() if key != "func"},
+                tool_version=tool_version(),
+                python=sys.version.split()[0],
+                platform=sys.platform,
+                termux=bool(os.environ.get("PREFIX")),
+            )
+        except OSError:
+            self.path = None
+            self._handle = None
+
+    def event(self, name: str, **fields: object) -> None:
+        if self._handle is None:
+            return
+        record = {
+            "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "event": name,
+            **{key: _log_text(value) if isinstance(value, (str, bytes)) else value for key, value in fields.items()},
+        }
+        try:
+            self._handle.write(json.dumps(record, ensure_ascii=False, default=str) + "\\n")
+            self._handle.flush()
+        except OSError:
+            pass
+
+    def close(self) -> None:
+        if self._handle is not None:
+            try:
+                self._handle.close()
+            except OSError:
+                pass
+            self._handle = None
+
+
+def active_log_event(name: str, **fields: object) -> None:
+    if _ACTIVE_LOG is not None:
+        _ACTIVE_LOG.event(name, **fields)
+
+
+def show_logs(args: argparse.Namespace) -> None:
+    root = log_directory()
+    logs = sorted(root.glob("operation-*.jsonl")) if root.is_dir() else []
+    print(f"Log directory: {root}")
+    if not logs:
+        print("No operation logs found yet.")
+        return
+    selected = logs[-max(1, args.limit):]
+    for path in selected:
+        print(path)
+    if args.tail:
+        latest = logs[-1]
+        lines = latest.read_text(encoding="utf-8", errors="replace").splitlines()
+        print(f"\n--- latest log: {latest} ---")
+        print("\n".join(lines[-args.tail:]))
 
 
 class ToolError(RuntimeError):
@@ -48,7 +150,7 @@ def sanitize_diagnostic_text(text: str) -> str:
     return text
 
 
-def write_diagnostic(command: str, error: str, code: int) -> Path:
+def write_diagnostic(command: str, error: str, code: int, *, log_path: Path | None = None, context: dict[str, object] | None = None) -> Path:
     report_dir = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / APP_NAME
     report_dir.mkdir(parents=True, exist_ok=True)
     report = report_dir / f"error-{int(time.time())}.json"
@@ -61,6 +163,8 @@ def write_diagnostic(command: str, error: str, code: int) -> Path:
         "platform": sys.platform,
         "termux": bool(os.environ.get("PREFIX")),
         "privacy": "No PAK contents, Lua source, AES keys, or full file paths are stored.",
+        "log_file": str(log_path) if log_path else None,
+        "context": context or {},
     }
     report.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     return report
@@ -355,6 +459,7 @@ def run_repak(binary: str, aes_key: str | None, args: list[str]) -> None:
         display_command += ["--aes-key", "<redacted>"]
     display_command += args
     print("$ " + " ".join(subprocess.list2cmdline([part]) for part in display_command))
+    active_log_event("repak_started", command=display_command)
     try:
         completed = subprocess.run(
             command,
@@ -365,8 +470,15 @@ def run_repak(binary: str, aes_key: str | None, args: list[str]) -> None:
             errors="replace",
         )
     except OSError as exc:
+        active_log_event("repak_execution_error", error=str(exc))
         fail(f"could not execute repak: {exc}")
 
+    active_log_event(
+        "repak_finished",
+        returncode=completed.returncode,
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+    )
     if completed.stdout.strip():
         print(completed.stdout.rstrip())
     if completed.returncode != 0:
@@ -562,6 +674,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--manifest")
     p.set_defaults(func=pak_verify)
 
+    p = sub.add_parser("logs", help="list structured operation logs and show the latest tail")
+    p.add_argument("--limit", type=int, default=10, help="number of recent log files to list")
+    p.add_argument("--tail", type=int, default=0, help="also print this many lines from the latest log")
+    p.set_defaults(func=show_logs)
+
     return parser
 
 
@@ -654,29 +771,65 @@ def update_project() -> bool:
 
 
 def execute_with_recovery(command: str, handler, args: argparse.Namespace) -> bool:
+    global _ACTIVE_LOG
+    operation_log = OperationLog(command, args)
+    previous_log = _ACTIVE_LOG
+    _ACTIVE_LOG = operation_log
     try:
+        active_log_event("handler_started", handler=getattr(handler, "__name__", str(handler)))
         handler(args)
+        active_log_event("operation_succeeded")
         return True
     except ToolError as exc:
-        report = write_diagnostic(command, str(exc), exc.code)
-        print(f"{APP_NAME}: error: {sanitize_diagnostic_text(str(exc))}", file=sys.stderr)
+        error_text = str(exc)
+        active_log_event("operation_failed", error=error_text, exit_code=exc.code, traceback=traceback.format_exc())
+        context = {"log_file": str(operation_log.path) if operation_log.path else None, "error_type": type(exc).__name__}
+        report = write_diagnostic(command, error_text, exc.code, log_path=operation_log.path, context=context)
+        print(f"{APP_NAME}: error: {sanitize_diagnostic_text(error_text)}", file=sys.stderr)
         print(f"Diagnostic saved locally: {report}", file=sys.stderr)
+        if operation_log.path:
+            print(f"Operation log saved locally: {operation_log.path}", file=sys.stderr)
         _send_report(report)
         if os.environ.get("TOOL_NO_AUTO_RETRY") == "1":
+            active_log_event("retry_skipped", reason="TOOL_NO_AUTO_RETRY=1")
             return False
         print("Trying one tool update and retry...")
+        active_log_event("retry_update_started")
         if not update_project():
+            active_log_event("retry_update_failed")
             return False
+        active_log_event("retry_started")
         try:
             handler(args)
+            active_log_event("retry_succeeded")
             print("Retry successful after update.")
             return True
         except ToolError as retry_exc:
-            retry_report = write_diagnostic(command, str(retry_exc), retry_exc.code)
-            print(f"Retry failed: {sanitize_diagnostic_text(str(retry_exc))}", file=sys.stderr)
+            retry_error = str(retry_exc)
+            active_log_event("retry_failed", error=retry_error, exit_code=retry_exc.code, traceback=traceback.format_exc())
+            retry_context = {"log_file": str(operation_log.path) if operation_log.path else None, "error_type": type(retry_exc).__name__, "retry": True}
+            retry_report = write_diagnostic(command, retry_error, retry_exc.code, log_path=operation_log.path, context=retry_context)
+            print(f"Retry failed: {sanitize_diagnostic_text(retry_error)}", file=sys.stderr)
             print(f"New diagnostic saved locally: {retry_report}", file=sys.stderr)
+            if operation_log.path:
+                print(f"Operation log saved locally: {operation_log.path}", file=sys.stderr)
             _send_report(retry_report)
             return False
+    except Exception as exc:
+        error_text = f"unexpected {type(exc).__name__}: {exc}"
+        active_log_event("unexpected_exception", error=error_text, traceback=traceback.format_exc())
+        context = {"log_file": str(operation_log.path) if operation_log.path else None, "error_type": type(exc).__name__, "unexpected": True}
+        report = write_diagnostic(command, error_text, 1, log_path=operation_log.path, context=context)
+        print(f"{APP_NAME}: unexpected error: {sanitize_diagnostic_text(error_text)}", file=sys.stderr)
+        print(f"Diagnostic saved locally: {report}", file=sys.stderr)
+        if operation_log.path:
+            print(f"Operation log saved locally: {operation_log.path}", file=sys.stderr)
+        _send_report(report)
+        return False
+    finally:
+        active_log_event("operation_finished")
+        operation_log.close()
+        _ACTIVE_LOG = previous_log
 
 
 def start_background_update() -> None:

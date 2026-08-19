@@ -15,6 +15,7 @@ PakForge supports direct PAK inspection, extraction, block-aware repacking, batc
 | `pakforge batch-unpack` | Extract every `.pak` file in a directory. |
 | `pakforge manifest` | Create a SHA-256 manifest for an unpacked or edited directory. |
 | `pakforge verify` | Detect missing, changed, or extra files against a manifest. |
+| `tool logs` | List structured operation logs and show the latest log tail. |
 | `tool unpack/repack/inject` | Existing repak-based compatibility workflows. |
 
 ## Neon terminal theme
@@ -150,6 +151,24 @@ pakforge verify /sdcard/Download/game-unpacked
 ```
 
 The `--target-prefix` value must be a relative PAK directory; parent traversal is rejected. PakForge refuses to replace an existing output by default. Use `--overwrite` only after keeping a separate copy of important data. The `--is-od` option is available for OD/custom PAK handling. The original `tool` command remains available for repak-based `unpack`, `repack`, `inject`, `info`, `batch-unpack`, `manifest`, and `verify` workflows.
+
+## Structured bug logs
+
+Every command run through the native `pakforge` CLI or legacy `tool` wrapper creates an append-only JSONL operation log containing the operation name, execution steps, repak command summary, stdout/stderr, exit code, retry result, Python/Termux context, and traceback when an unexpected exception occurs. AES keys, tokens, passwords, and other secret-like arguments are redacted. The detailed log stays local; only the existing sanitized diagnostic report is eligible for the optional anonymous relay.
+
+Show recent logs from the legacy wrapper:
+
+```bash
+tool logs
+```
+
+Show recent logs from the native parser:
+
+```bash
+pakforge logs --tail 20
+```
+
+Legacy-wrapper logs are stored under `~/.local/state/tool/logs/`; native PakForge logs are stored under `~/.local/state/pakforge/logs/`. When an operation fails, the terminal prints the exact operation-log path, so the real failing step, exception type, source line, and subprocess output can be identified instead of relying on a generic exit code.
 
 ## Simple command-line use
 
