@@ -16,6 +16,10 @@ The generated `tool` command now opens the same neon PakForge UI as `pakforge`, 
 
 The neon primary UI now presents one **PakForge Control Center**. It is the single normal place to start guided PAK work, inspect PAK metadata, unpack with optional Lua decompilation, repack with verification, run the Lua pipeline, run the auto pipeline, view setup status/logs, and access diagnostics. The menu uses simple digit-only choices (`1` through `7`, with `0` to exit); users do not need to type CLI commands or manual paths inside the UI. PakForge numerically scans `PAK/` and infers the standard `UNPACK/<name>/`, `EDIT/<name>/`, `REPACK/<name>/`, `LUA/<name>/`, and `RESULT/<name>.pak` workspaces. The guided workflow selects a PAK from `PAK/`, unpacks it to `UNPACK/<name>/` on the first run, and repacks the edited workspace to `RESULT/<name>.pak` on the next run. Advanced CLI flags remain available for developers, while the normal `pakforge` and `tool` entry points open the same neon interface.
 
+## Startup auto-update
+
+Every normal `pakforge` or `tool` launch starts a non-blocking check of the public `origin/main` branch. Fast-forward updates are downloaded in the background and launcher scripts are regenerated for the next launch, so the current UI is never interrupted. Dirty worktrees are detected and skipped safely instead of being overwritten. Update state is available through `pakforge update-status`, with details in `~/.local/state/pakforge/update-status.json` and `~/.local/state/pakforge/update.log`. Use `PAKFORGE_NO_UPDATE=1 pakforge` only when the update check must be disabled for one launch.
+
 ## New command and opt-out
 
 Use the following command to inspect current setup state, the last error, and paths to the setup log and lock:

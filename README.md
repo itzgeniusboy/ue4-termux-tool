@@ -23,6 +23,10 @@ PakForge supports direct PAK inspection, extraction, block-aware repacking, batc
 | `tool` | Alias for the same neon PakForge UI as `pakforge`. |
 | `UE4TOOL_LEGACY=1 tool ...` | Explicitly access the old repak-based compatibility wrapper. |
 
+## Startup auto-update
+
+Every normal `pakforge` or `tool` launch starts a non-blocking GitHub `origin/main` check in the background. A fast-forward update is downloaded automatically and the launcher scripts are regenerated; the updated code becomes active on the next launch so the current UI is never interrupted. If tracked local changes are present, the update is skipped rather than overwriting them. Update state and logs are available inside the control center and at `~/.local/state/pakforge/update-status.json` and `~/.local/state/pakforge/update.log`. Use `PAKFORGE_NO_UPDATE=1 pakforge` only when an update check must be disabled for one launch. The explicit `pakforge update-status` view reports whether the last check was updated, skipped, failed, or still running.
+
 ## Neon terminal theme
 
 PakForge uses a neon terminal presentation inspired by the supplied reference: a dark layout with purple and blue borders, cyan prompts, magenta section titles, green success states, and compact workflow panels. The interactive banner and selectors are designed for Termux screens while keeping the command output readable.

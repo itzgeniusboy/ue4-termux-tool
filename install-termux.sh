@@ -61,6 +61,50 @@ SCRIPT_DIR="$SCRIPT_DIR"
 STATE_DIR="\${XDG_STATE_HOME:-\$HOME/.local/state}/pakforge"
 mkdir -p "\$STATE_DIR"
 
+UPDATE_LOG="\$STATE_DIR/update.log"
+UPDATE_STATUS="\$STATE_DIR/update-status.json"
+if [ "\${1:-}" = "update-status" ]; then
+  if [ -f "\$UPDATE_STATUS" ]; then
+    cat "\$UPDATE_STATUS"
+  else
+    printf '%s\n' '{"state":"not_started","message":"No startup update check has completed yet."}'
+  fi
+  exit 0
+fi
+
+if [ "\${PAKFORGE_NO_UPDATE:-0}" != "1" ] && [ -d "\$SCRIPT_DIR/.git" ]; then
+  UPDATE_LOCK="\$STATE_DIR/update.lock"
+  if mkdir "\$UPDATE_LOCK" 2>/dev/null; then
+    printf '%s\n' "[PakForge] GitHub update check started in the background."
+    (
+      trap 'rmdir "\$UPDATE_LOCK" 2>/dev/null || true' EXIT
+      cd "\$SCRIPT_DIR"
+      now="\$(date -Iseconds)"
+      printf '{"state":"running","time":"%s","message":"Checking origin/main"}\n' "\$now" > "\$UPDATE_STATUS"
+      if [ -n "\$(git status --porcelain --untracked-files=no)" ]; then
+        printf '%s PakForge update skipped: local changes detected.\n' "\$now" >> "\$UPDATE_LOG"
+        printf '{"state":"skipped","time":"%s","message":"Local changes detected; no files were overwritten."}\n' "\$now" > "\$UPDATE_STATUS"
+        exit 0
+      fi
+      if ! git fetch --quiet origin main; then
+        printf '%s PakForge update failed during fetch.\n' "\$now" >> "\$UPDATE_LOG"
+        printf '{"state":"failed","time":"%s","message":"GitHub fetch failed; current version was kept."}\n' "\$now" > "\$UPDATE_STATUS"
+        exit 0
+      fi
+      if git merge --ff-only --quiet origin/main; then
+        printf '%s PakForge updated from origin/main.\n' "\$now" >> "\$UPDATE_LOG"
+        printf '{"state":"updated","time":"%s","message":"Latest origin/main downloaded; it will be active on the next launch."}\n' "\$now" > "\$UPDATE_STATUS"
+        SKIP_PACKAGES=1 PAKFORGE_DEFER_SETUP=1 bash "\$SCRIPT_DIR/install-termux.sh" >> "\$UPDATE_LOG" 2>&1 || true
+      else
+        printf '%s PakForge update skipped: fast-forward unavailable.\n' "\$now" >> "\$UPDATE_LOG"
+        printf '{"state":"skipped","time":"%s","message":"Fast-forward unavailable; current version was kept."}\n' "\$now" > "\$UPDATE_STATUS"
+      fi
+    ) >/dev/null 2>&1 &
+  else
+    printf '%s\n' "[PakForge] GitHub update check is already running in the background."
+  fi
+fi
+
 if [ "\${1:-}" = "setup-status" ]; then
   exec python3 "\$SCRIPT_DIR/pakforge_setup.py" --status
 fi
@@ -79,20 +123,6 @@ fi
 if ! python3 -c 'import rich, pytz, gmalg, Crypto, zstandard' >/dev/null 2>&1; then
   printf '%s\n' "[PakForge] Core dependencies are still installing in the background." >&2
   exec python3 "\$SCRIPT_DIR/pakforge_first_run.py" --script "\$SCRIPT_DIR/pakforge.py" "\$@"
-fi
-
-if [ "\${PAKFORGE_NO_UPDATE:-0}" != "1" ] && [ -d "\$SCRIPT_DIR/.git" ]; then
-  LOCK="\$STATE_DIR/update.lock"
-  LOG="\$STATE_DIR/update.log"
-  if mkdir "\$LOCK" 2>/dev/null; then
-    (
-      trap 'rmdir "\$LOCK" 2>/dev/null || true' EXIT
-      cd "\$SCRIPT_DIR"
-      git fetch --quiet origin main && git merge --ff-only --quiet origin/main \\
-        && printf '%s PakForge updated in background\\n' "\$(date -Iseconds)" >> "\$LOG" \\
-        || true
-    ) >/dev/null 2>&1 &
-  fi
 fi
 
 exec python3 "\$SCRIPT_DIR/pakforge.py" "\$@"
