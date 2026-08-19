@@ -11,6 +11,7 @@ import uuid
 import hashlib
 import platform
 import subprocess
+import tempfile
 import base64
 import ctypes
 import ctypes.util
@@ -2266,6 +2267,69 @@ def unpack_selected_sdcard_pak() -> None:
         console.print(f"[bold {NEON['red']}]Unpack failed: {escape(str(exc))}[/bold {NEON['red']}]")
 
 
+def lua_inject_selected_sdcard_pak() -> None:
+    """Inject only Lua source/bytecode files from the SD-card EDIT folder."""
+    SDCARD_EDIT_DIR.mkdir(parents=True, exist_ok=True)
+
+    pak_file = select_pak_from_sdcard("Source PAK")
+    if pak_file is None:
+        return
+
+    default_target = "Content/Lua/Mods"
+    console.print(f"[bold {NEON['cyan']}]📁 Source PAK: {pak_file.name}[/bold {NEON['cyan']}]")
+    target_path = safe_input(
+        f"[bold {NEON['cyan']}]📁 Target path (inside PAK) [default: {default_target}]:[/bold {NEON['cyan']}] "
+    ).strip()
+    target_path = (target_path or default_target).replace('\\', '/').strip('/')
+
+    lua_files = sorted(
+        (
+            path for path in SDCARD_EDIT_DIR.rglob('*')
+            if path.is_file() and path.suffix.lower() in {'.lua', '.luac'}
+        ),
+        key=lambda path: path.as_posix().casefold(),
+    )
+    if not lua_files:
+        console.print(
+            f"[bold {NEON['yellow']}]No .lua or .luac files found in {SDCARD_EDIT_DIR}/.[/bold {NEON['yellow']}]"
+        )
+        return
+
+    output_pak = SDCARD_DOWNLOAD_DIR / f"MODDED_{pak_file.name}"
+    try:
+        # Stage only Lua files so images, configs, and other EDIT content cannot
+        # accidentally enter this Lua-only injection workflow.
+        with tempfile.TemporaryDirectory(prefix='pakforge-lua-inject-') as staging:
+            staging_root = Path(staging)
+            for source in lua_files:
+                relative = source.relative_to(SDCARD_EDIT_DIR)
+                destination = staging_root / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, destination)
+
+            pak = TencentPakFile(pak_file)
+            count = repack_pak_file_full(
+                pak,
+                staging_root,
+                output_pak,
+                target_path=target_path,
+                force_add=True,
+                workers=4,
+            )
+
+        if count <= 0:
+            console.print(f"[bold {NEON['red']}]No Lua files were repacked.[/bold {NEON['red']}]")
+            return
+
+        TencentPakFile(output_pak)
+        console.print(
+            f"[bold {NEON['green']}]✅ Lua-injected {count} files to: {output_pak}[/bold {NEON['green']}]"
+        )
+        console.print(f"[bold {NEON['green']}]✅ Verification passed![/bold {NEON['green']}]")
+    except Exception as exc:
+        console.print(f"[bold {NEON['red']}]Lua inject failed: {escape(str(exc))}[/bold {NEON['red']}]")
+
+
 def repack_selected_sdcard_pak() -> None:
     SDCARD_EDIT_DIR.mkdir(parents=True, exist_ok=True)
     if not _directory_has_files(SDCARD_EDIT_DIR):
@@ -2321,10 +2385,11 @@ def main_menu():
     while True:
         print_ultimate_banner()
         console.print(f"[bold {NEON['green']}]1. UNPACK PAK[/bold {NEON['green']}]")
-        console.print(f"[bold {NEON['green']}]2. REPACK PAK (Lua Inject)[/bold {NEON['green']}]")
-        console.print(f"[bold {NEON['green']}]3. EXIT[/bold {NEON['green']}]")
+        console.print(f"[bold {NEON['green']}]2. REPACK PAK (Full)[/bold {NEON['green']}]")
+        console.print(f"[bold {NEON['green']}]3. LUA INJECT (Only Lua files, no full rebuild)[/bold {NEON['green']}]")
+        console.print(f"[bold {NEON['green']}]4. EXIT[/bold {NEON['green']}]")
         choice = safe_input(
-            f"[bold {NEON['cyan']}]SELECT (1-3):[/bold {NEON['cyan']}] "
+            f"[bold {NEON['cyan']}]SELECT (1-4):[/bold {NEON['cyan']}] "
         ).strip()
 
         if choice == "1":
@@ -2332,9 +2397,11 @@ def main_menu():
         elif choice == "2":
             repack_selected_sdcard_pak()
         elif choice == "3":
+            lua_inject_selected_sdcard_pak()
+        elif choice == "4":
             return
         else:
-            console.print(f"[bold {NEON['red']}]Please select 1, 2, or 3.[/bold {NEON['red']}]")
+            console.print(f"[bold {NEON['red']}]Please select 1, 2, 3, or 4.[/bold {NEON['red']}]")
             safe_input(f"[bold {NEON['cyan']}]Press Enter to continue...[/bold {NEON['cyan']}] ")
 
 if __name__ == '__main__':

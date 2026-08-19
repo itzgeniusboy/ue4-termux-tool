@@ -14,7 +14,7 @@ The generated `tool` command now opens the same neon PakForge UI as `pakforge`, 
 
 ## PAKFORGE ULTIMATE beginner menu
 
-The normal neon interface is now a compact three-option menu with no submenus or typed CLI commands:
+The normal neon interface is now a compact four-option menu with no submenus or typed CLI commands:
 
 ```text
 ═══════════════════════════════════════
@@ -22,13 +22,14 @@ The normal neon interface is now a compact three-option menu with no submenus or
 ═══════════════════════════════════════
 
 1. UNPACK PAK
-2. REPACK PAK (Lua Inject)
-3. EXIT
+2. REPACK PAK (Full)
+3. LUA INJECT (Only Lua files, no full rebuild)
+4. EXIT
 
-SELECT (1-3):
+SELECT (1-4):
 ```
 
-All interactive filesystem operations use the Termux SD-card layout. PAK files are selected from `/sdcard/Download/`, extracted files are written to `/sdcard/Download/UNPACKED/<pak_name>/`, edits are read from `/sdcard/Download/EDIT/`, and the repacked result is written to `/sdcard/Download/MODDED_<pak_name>.pak`. If the EDIT folder is empty, the menu shows `EDIT folder is empty. Place your modified files in /sdcard/Download/EDIT/ first.`. Repack defaults to the target path `Content/Lua/Mods`; after writing the output, PakForge reopens it with the native parser and shows `✅ Verification passed!` only after that structural check succeeds. Advanced developer workflows remain available through CLI subcommands, while normal `pakforge` and `tool` launches open this same interface.
+All interactive filesystem operations use the Termux SD-card layout. PAK files are selected from `/sdcard/Download/`, extracted files are written to `/sdcard/Download/UNPACKED/<pak_name>/`, edits are read from `/sdcard/Download/EDIT/`, and the repacked result is written to `/sdcard/Download/MODDED_<pak_name>.pak`. If the EDIT folder is empty, the full-repack menu shows `EDIT folder is empty. Place your modified files in /sdcard/Download/EDIT/ first.`. Full repack defaults to `Content/Lua/Mods`. The separate Lua-inject option filters EDIT to only `.lua` and `.luac` files, calls the existing full repack engine with `force_add=True`, and uses the same default target and output path. Both repack actions reopen the generated PAK with the native parser and show `✅ Verification passed!` only after that structural check succeeds. Advanced developer workflows remain available through CLI subcommands, while normal `pakforge` and `tool` launches open this same interface.
 
 ## Startup auto-update
 

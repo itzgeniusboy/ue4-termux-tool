@@ -1,6 +1,6 @@
 # PakForge SD-card-only interactive menu
 
-The following code is integrated into `pakforge_core.py`. It assumes the existing module imports and helpers: `os`, `Path`, `console`, `NEON`, `escape`, `safe_input`, `human_size`, `TencentPakFile`, `dump_unpacking_log`, and `repack_pak_file_full`.
+The following code is integrated into `pakforge_core.py`. It assumes the existing module imports and helpers: `os`, `shutil`, `tempfile`, `Path`, `console`, `NEON`, `escape`, `safe_input`, `human_size`, `TencentPakFile`, `dump_unpacking_log`, and `repack_pak_file_full`.
 
 ```python
 SDCARD_DOWNLOAD_DIR = Path("/sdcard/Download")
@@ -113,6 +113,54 @@ def unpack_selected_sdcard_pak() -> None:
         )
 
 
+def lua_inject_selected_sdcard_pak() -> None:
+    """Inject only Lua source/bytecode files from the SD-card EDIT folder."""
+    SDCARD_EDIT_DIR.mkdir(parents=True, exist_ok=True)
+    pak_file = select_pak_from_sdcard("Source PAK")
+    if pak_file is None:
+        return
+
+    default_target = "Content/Lua/Mods"
+    target_path = safe_input(
+        f"[bold {NEON['cyan']}]📁 Target path (inside PAK) [default: {default_target}]:[/bold {NEON['cyan']}] "
+    ).strip()
+    target_path = (target_path or default_target).replace("\\", "/").strip("/")
+    lua_files = sorted(
+        (
+            path for path in SDCARD_EDIT_DIR.rglob("*")
+            if path.is_file() and path.suffix.lower() in {".lua", ".luac"}
+        ),
+        key=lambda path: path.as_posix().casefold(),
+    )
+    if not lua_files:
+        console.print(
+            f"[bold {NEON['yellow']}]No .lua or .luac files found in {SDCARD_EDIT_DIR}/.[/bold {NEON['yellow']}]"
+        )
+        return
+
+    output_pak = SDCARD_DOWNLOAD_DIR / f"MODDED_{pak_file.name}"
+    try:
+        with tempfile.TemporaryDirectory(prefix="pakforge-lua-inject-") as staging:
+            staging_root = Path(staging)
+            for source in lua_files:
+                destination = staging_root / source.relative_to(SDCARD_EDIT_DIR)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, destination)
+            count = repack_pak_file_full(
+                TencentPakFile(pak_file), staging_root, output_pak,
+                target_path=target_path, force_add=True, workers=4,
+            )
+        if count <= 0:
+            return
+        TencentPakFile(output_pak)
+        console.print(
+            f"[bold {NEON['green']}]✅ Lua-injected {count} files to: {output_pak}[/bold {NEON['green']}]"
+        )
+        console.print(f"[bold {NEON['green']}]✅ Verification passed![/bold {NEON['green']}]")
+    except Exception as exc:
+        console.print(f"[bold {NEON['red']}]Lua inject failed: {escape(str(exc))}[/bold {NEON['red']}]")
+
+
 def repack_selected_sdcard_pak() -> None:
     SDCARD_EDIT_DIR.mkdir(parents=True, exist_ok=True)
     if not _directory_has_files(SDCARD_EDIT_DIR):
@@ -179,11 +227,14 @@ def main_menu():
         print_ultimate_banner()
         console.print(f"[bold {NEON['green']}]1. UNPACK PAK[/bold {NEON['green']}]")
         console.print(
-            f"[bold {NEON['green']}]2. REPACK PAK (Lua Inject)[/bold {NEON['green']}]"
+            f"[bold {NEON['green']}]2. REPACK PAK (Full)[/bold {NEON['green']}]"
         )
-        console.print(f"[bold {NEON['green']}]3. EXIT[/bold {NEON['green']}]")
+        console.print(
+            f"[bold {NEON['green']}]3. LUA INJECT (Only Lua files, no full rebuild)[/bold {NEON['green']}]"
+        )
+        console.print(f"[bold {NEON['green']}]4. EXIT[/bold {NEON['green']}]")
         choice = safe_input(
-            f"[bold {NEON['cyan']}]SELECT (1-3):[/bold {NEON['cyan']}] "
+            f"[bold {NEON['cyan']}]SELECT (1-4):[/bold {NEON['cyan']}] "
         ).strip()
 
         if choice == "1":
@@ -191,10 +242,12 @@ def main_menu():
         elif choice == "2":
             repack_selected_sdcard_pak()
         elif choice == "3":
+            lua_inject_selected_sdcard_pak()
+        elif choice == "4":
             return
         else:
             console.print(
-                f"[bold {NEON['red']}]Please select 1, 2, or 3.[/bold {NEON['red']}]"
+                f"[bold {NEON['red']}]Please select 1, 2, 3, or 4.[/bold {NEON['red']}]"
             )
             safe_input(
                 f"[bold {NEON['cyan']}]Press Enter to continue...[/bold {NEON['cyan']}] "
@@ -203,4 +256,4 @@ def main_menu():
 
 The no-argument `pakforge` and `tool` entry points call this `main_menu()` implementation. The normal interface uses only `/sdcard/Download/`, `/sdcard/Download/EDIT/`, `/sdcard/Download/UNPACKED/`, and `/sdcard/Download/MODDED_*.pak`.
 
-The repack action defaults to `Content/Lua/Mods`. It reopens the generated PAK with the native parser before displaying `✅ Verification passed!`, so the success message reflects an actual structural parse rather than an unconditional print.
+The full repack action defaults to `Content/Lua/Mods`. The separate Lua-inject action stages only `.lua` and `.luac` files from EDIT, calls `repack_pak_file_full(..., force_add=True)`, and writes the same `MODDED_<pak_name>.pak` output. Both actions reopen the generated PAK with the native parser before displaying `✅ Verification passed!`.
