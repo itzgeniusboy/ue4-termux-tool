@@ -316,9 +316,10 @@ def main() -> None:
         assert auto_report["replaced_files"][0]["pak_path"] == "Content/Lua/Mods/ui.luac"
         assert output.read_bytes() == b"verified-pak"
 
-    core_source = (ROOT / "pakforge_core.py").read_text(encoding="utf-8")
-    assert "GUIDED PAK WORKFLOW  •  AUTO UNPACK / REPACK" in core_source
-    assert "One recommended workflow: select a PAK, edit it, then run PakForge again." in core_source
+    cli_source = (ROOT / "pakforge.py").read_text(encoding="utf-8")
+    assert "PAKFORGE CONTROL CENTER" in cli_source
+    assert "Guided PAK workflow  •  auto unpack / repack" in cli_source
+    assert "pakforge_control_center()" in cli_source
 
     version = run("--version")
     assert version.returncode == 0

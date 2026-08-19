@@ -12,9 +12,9 @@ When setup is ready, the first-run screen transfers control to `pakforge.py`. If
 
 The generated `tool` command now opens the same neon PakForge UI as `pakforge`, avoiding two different beginner experiences. The older repak-based wrapper remains available explicitly with `UE4TOOL_LEGACY=1 tool ...`.
 
-## Guided primary menu
+## Unified control center
 
-The neon primary UI now presents one recommended **Guided PAK Workflow**. It selects a PAK from `PAK/`, unpacks it to `UNPACK/<name>/` on the first run, and repacks the edited workspace to `RESULT/<name>.pak` on the next run. Advanced CLI workflows remain available but are not shown as beginner-facing menu choices.
+The neon primary UI now presents one **PakForge Control Center**. It is the single normal place to start guided PAK work, inspect PAK metadata, unpack with optional Lua decompilation, repack with verification, run the Lua pipeline, run the auto pipeline, view setup status/logs, and access diagnostics. The guided workflow selects a PAK from `PAK/`, unpacks it to `UNPACK/<name>/` on the first run, and repacks the edited workspace to `RESULT/<name>.pak` on the next run. Advanced CLI flags remain available for developers, while the normal `pakforge` and `tool` entry points open the same neon interface.
 
 ## New command and opt-out
 

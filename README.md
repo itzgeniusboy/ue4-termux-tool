@@ -108,16 +108,22 @@ pakforge
 
 The command opens the PakForge Launcher immediately. During the very first bootstrap, the launcher remains visible while the minimum Termux runtime and repository are prepared, with an animated stage-estimate percentage bar, remaining percentage, current stage, elapsed time, ETA when measurable, heartbeat counter, last-update timestamp, and download-size fields when the underlying operation reports them. Heartbeat updates are emitted during long-running commands, and the screen uses a reduced-flicker redraw. If Python modules, Lua 5.1, or the optional `repak` compatibility binary are missing, a transparent setup worker starts in the background using official package managers and fixed `pip`/Cargo commands. The setup output is stored at `~/.local/state/pakforge/setup.log`, and status is available with `pakforge setup-status`. If an earlier bootstrap died without cleanup, the next run detects and removes its stale lock; a live bootstrap lock is left untouched. The first-run screen lets you press Enter to refresh, `s` to view full JSON status, or `q` to exit; once setup reaches `ready`, the original PakForge command continues automatically. Use `PAKFORGE_NO_SETUP=1 pakforge` to disable automatic dependency setup. Background update checks remain separate in `~/.local/state/pakforge/update.log`; disable them with `PAKFORGE_NO_UPDATE=1 pakforge`. The compatibility command `tool` remains available for repak-based workflows.
 
-The neon primary UI now shows one recommended **Guided PAK Workflow** instead of asking new users to choose between several repack modes. It selects a PAK from `PAK/`, unpacks it to `UNPACK/<name>/` on the first run, and repacks the edited workspace to `RESULT/<name>.pak` on the next run. Advanced operations remain available through the documented CLI commands, but they are not presented as optional choices in the main screen.
+The neon primary UI is now a single **PakForge Control Center**. Use `pakforge` for all normal work; the same generated launcher is also available as `tool`. The control center routes guided PAK work, inspection, unpacking, verified repacking, Lua injection, the auto pipeline, setup status, logs, and diagnostics without requiring users to remember separate commands.
 
 The primary menu provides:
 
 ```text
-01) GUIDED PAK WORKFLOW  •  AUTO UNPACK / REPACK
-00) EXIT
+01) Guided PAK workflow  •  auto unpack / repack
+02) Inspect PAK  •  metadata / capabilities / hashes
+03) Unpack PAK  •  optional Lua decompile
+04) Repack PAK  •  verify output
+05) Lua pipeline  •  compile / inject / verify
+06) Auto pipeline  •  unpack → edit → compile → repack
+07) Setup status / logs / diagnostics
+00) Exit
 ```
 
-The guided workflow selects a `.pak` from `PAK/`, unpacks it to `UNPACK/<name>/`, and repacks the edited workspace to `RESULT/<name>.pak` when PakForge is run again. Parser-specific metadata, progress, debug logs, and manifests remain available through the CLI commands documented below. Advanced workflows such as Lua injection, batch processing, patch mode, and inventory inspection remain available from the command line and are intentionally kept out of the beginner-facing menu.
+The guided workflow selects a `.pak` from `PAK/`, unpacks it to `UNPACK/<name>/`, and repacks the edited workspace to `RESULT/<name>.pak` when PakForge is run again. Advanced flags remain available through the CLI for developers who need them. The old repak wrapper is not opened by default; use `UE4TOOL_LEGACY=1 tool --help` only when explicit legacy compatibility is required.
 
 If the menu cannot find a file, enter its full path when prompted. Storage permission is enabled by running:
 

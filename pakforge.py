@@ -23,11 +23,19 @@ import traceback
 import tempfile
 from pathlib import Path, PurePath
 
+
 try:
     from pakforge_core import (
         TencentPakFile,
         dump_unpacking_log,
-        main_menu,
+        console,
+        NEON,
+        Panel,
+        Table,
+        ROUNDED,
+        safe_input,
+        print_banner,
+        guided_pak_workflow,
         repack_pak_file_full,
         repack_pak_file_patch,
         repack_pak_file_with_block_display,
@@ -1204,11 +1212,114 @@ def repack_command(args: argparse.Namespace) -> None:
     print(f"Repacked {count} file(s) to: {output}")
 
 
+def _menu_path(prompt: str, default: str | None = None, must_exist: bool = False) -> str:
+    suffix = f" [{default}]" if default else ""
+    value = safe_input(f"[bold {NEON['cyan']}]{prompt}{suffix}:[/bold {NEON['cyan']}] ").strip()
+    value = value or (default or "")
+    path = Path(value).expanduser()
+    if must_exist and not path.exists():
+        console.print(f"[bold {NEON['red']}]Path not found:[/bold {NEON['red']}] {path}")
+        return ""
+    return str(path)
+
+
+def _menu_run(arguments: list[str]) -> None:
+    """Run an existing PakForge CLI command from the central UI."""
+    console.print(f"[bold {NEON['blue']}]Running:[/bold {NEON['blue']}] pakforge {' '.join(shlex.quote(item) for item in arguments)}")
+    result = subprocess.run([sys.executable, str(Path(__file__).resolve()), *arguments], check=False)
+    if result.returncode:
+        console.print(f"[bold {NEON['red']}]Command exited with status {result.returncode}.[/bold {NEON['red']}]")
+
+
+def _menu_pause() -> None:
+    safe_input(f"\n[bold {NEON['muted']}]Press Enter to return to the PakForge control center...[/bold {NEON['muted']}] ")
+
+
+def _menu_guided(data_path: Path) -> None:
+    guided_pak_workflow(data_path)
+
+
+def pakforge_control_center() -> None:
+    """Provide one central interactive UI for all common PakForge workflows."""
+    data_path = Path(__file__).resolve().parent
+    while True:
+        print_banner()
+        menu = Table(show_header=False, box=ROUNDED, border_style=NEON['purple'], padding=(0, 2), expand=False)
+        menu.add_column("Key", style=f"bold {NEON['cyan']}", width=5, justify="center")
+        menu.add_column("PakForge control", style="bold white")
+        menu.add_row("01", "Guided PAK workflow  •  auto unpack / repack")
+        menu.add_row("02", "Inspect PAK  •  metadata / capabilities / hashes")
+        menu.add_row("03", "Unpack PAK  •  optional Lua decompile")
+        menu.add_row("04", "Repack PAK  •  verify output")
+        menu.add_row("05", "Lua pipeline  •  compile / inject / verify")
+        menu.add_row("06", "Auto pipeline  •  unpack → edit → compile → repack")
+        menu.add_row("07", "Setup status / logs / diagnostics")
+        menu.add_row("00", "Exit")
+        console.print(Panel(menu, title=f"[bold {NEON['pink']}]PAKFORGE CONTROL CENTER[/bold {NEON['pink']}]", border_style=NEON['blue'], box=ROUNDED, expand=False))
+        console.print(f"[bold {NEON['muted']}]One UI controls the complete PakForge workflow. Advanced CLI flags remain available.[/bold {NEON['muted']}]")
+        choice = safe_input(f"[bold {NEON['cyan']}]SELECT ACTION:[/bold {NEON['cyan']}] ").strip().lower()
+
+        if choice in {"1", "01"}:
+            _menu_guided(data_path)
+            _menu_pause()
+        elif choice in {"2", "02"}:
+            pak = _menu_path("PAK file", str(data_path / "PAK"), must_exist=False)
+            if pak and Path(pak).is_dir():
+                candidates = sorted(Path(pak).glob("*.pak"))
+                pak = str(candidates[0]) if len(candidates) == 1 else _menu_path("PAK file", must_exist=True)
+            if pak and Path(pak).is_file():
+                _menu_run(["info", pak])
+            _menu_pause()
+        elif choice in {"3", "03"}:
+            pak = _menu_path("Source PAK", must_exist=True)
+            output = _menu_path("Output directory") if pak else ""
+            if pak and output:
+                _menu_run(["unpack", pak, output, "--decompile-lua"])
+            _menu_pause()
+        elif choice in {"4", "04"}:
+            source = _menu_path("Source PAK", must_exist=True)
+            edited = _menu_path("Edited directory", must_exist=True) if source else ""
+            output = _menu_path("Output PAK") if edited else ""
+            if source and edited and output:
+                _menu_run(["repack", source, edited, output, "--verify"])
+            _menu_pause()
+        elif choice in {"5", "05"}:
+            pak = _menu_path("Source PAK", must_exist=True)
+            lua_dir = _menu_path("Lua source directory", must_exist=True) if pak else ""
+            output = _menu_path("Output PAK") if lua_dir else ""
+            if pak and lua_dir and output:
+                target = _menu_path("Target prefix", "Script")
+                _menu_run(["lua-pipeline", "--pak", pak, "--lua-dir", lua_dir, "--output", output, "--target-prefix", target, "--compile-lua", "--verify"])
+            _menu_pause()
+        elif choice in {"6", "06"}:
+            pak = _menu_path("Source PAK", must_exist=True)
+            output = _menu_path("Output PAK") if pak else ""
+            edit_dir = _menu_path("Edit directory (optional; press Enter to pause for edits)") if output else ""
+            if pak and output:
+                arguments = ["auto", "--pak", pak, "--output", output, "--target-prefix", "Content/Lua"]
+                if edit_dir:
+                    arguments.extend(["--edit-dir", edit_dir])
+                _menu_run(arguments)
+            _menu_pause()
+        elif choice in {"7", "07"}:
+            setup_script = Path(__file__).with_name("pakforge_setup.py")
+            if setup_script.is_file():
+                subprocess.run([sys.executable, str(setup_script), "--status"], check=False)
+            _menu_run(["logs", "--tail", "20"])
+            _menu_pause()
+        elif choice in {"0", "00", "q", "quit", "exit"}:
+            console.print(f"[bold {NEON['pink']}]PakForge closed.[/bold {NEON['pink']}]")
+            return
+        else:
+            console.print(f"[bold {NEON['red']}]Unknown action. Choose a number from the control center.[/bold {NEON['red']}]")
+            time.sleep(1)
+
+
 def parser() -> argparse.ArgumentParser:
     cli = argparse.ArgumentParser(prog="pakforge", description="PakForge Termux PAK parser and repacking utility")
     cli.add_argument("--version", action="version", version=f"PakForge {VERSION}")
     sub = cli.add_subparsers(dest="command")
-    sub.add_parser("menu", help="open the original interactive PAK menu")
+    sub.add_parser("menu", help="open the unified PakForge control center")
 
     profile = sub.add_parser("profile", help="create and manage reusable developer build profiles")
     profile_actions = profile.add_subparsers(dest="profile_action", required=True)
@@ -1363,7 +1474,7 @@ def main() -> int:
     try:
         if args.command in (None, "menu"):
             operation.event("menu_started")
-            main_menu()
+            pakforge_control_center()
             operation.event("operation_succeeded")
             return 0
         operation.event("handler_started", handler=getattr(args.func, "__name__", str(args.func)))
