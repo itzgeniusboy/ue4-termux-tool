@@ -2180,6 +2180,54 @@ def display_file_selector(title, folder_path, file_pattern="*.pak"):
         console.print("[bold red][ERROR] Please enter a valid number[/]")
         return None, None
 
+def guided_pak_workflow(data_path):
+    """Run the recommended two-step workflow without exposing mode choices."""
+    pak_dir = data_path / "PAK"
+    if not pak_dir.exists():
+        console.print(f"[bold red]ERROR: PAK folder not found at {pak_dir}[/]")
+        console.print("[dim]Place a .pak file in the PAK folder and run PakForge again.[/dim]")
+        return
+
+    pak_file, _ = display_file_selector("Available .pak files:", pak_dir)
+    if not pak_file:
+        return
+
+    unpack_path = data_path / "UNPACK" / pak_file.stem
+    repack_path = data_path / "REPACK" / pak_file.stem
+    result_dir = data_path / "RESULT"
+    result_dir.mkdir(parents=True, exist_ok=True)
+
+    unpacked_files = [p for p in unpack_path.rglob("*") if p.is_file()] if unpack_path.exists() else []
+    edited_files = [p for p in repack_path.rglob("*") if p.is_file()] if repack_path.exists() else []
+
+    if not unpacked_files:
+        try:
+            console.print(f"[bold #00FFFF]Step 1/2 — Inspecting and unpacking {pak_file.name}...[/bold #00FFFF]")
+            pak = TencentPakFile(pak_file)
+            pak.dump(unpack_path)
+            log_path = unpack_path / f"Debug_{pak_file.stem}.log"
+            dump_unpacking_log(pak, log_path)
+            console.print(f"[bold #00FF88]SUCCESS: Extracted to {unpack_path}[/bold #00FF88]")
+            console.print("[bold #00E5FF]Edit the extracted files, then run PakForge again to repack automatically.[/bold #00E5FF]")
+        except Exception as e:
+            console.print(f"[bold #FF0055]ERROR: {escape(str(e))}[/bold #FF0055]")
+        return
+
+    edit_dir = repack_path if edited_files else unpack_path
+    try:
+        console.print(f"[bold #00FFFF]Step 2/2 — Repacking edited files from {edit_dir}...[/bold #00FFFF]")
+        pak = TencentPakFile(pak_file)
+        output_pak = result_dir / pak_file.name
+        count = repack_pak_file_full(pak, edit_dir, output_pak)
+        if count > 0:
+            console.print(f"[bold #00FF88]SUCCESS: Repacked {count} files.[/bold #00FF88]")
+            console.print(f"[bold #00FF88]Output: {output_pak}[/bold #00FF88]")
+        else:
+            console.print("[bold #FFAA00]No edited files detected; the extracted workspace is ready for editing.[/bold #FFAA00]")
+    except Exception as e:
+        console.print(f"[bold #FF0055]ERROR: Repack failed: {escape(str(e))}[/bold #FF0055]")
+
+
 def main_menu():
     if getattr(sys, 'frozen', False):
         data_path = Path(sys.executable).parent
@@ -2192,18 +2240,19 @@ def main_menu():
                      padding=(0, 2), expand=False)
         menu.add_column('Key', style=f'bold {NEON["cyan"]}', width=5, justify='center')
         menu.add_column('Workflow', style='bold white')
-        menu.add_row('01', 'UNPACK ALL TYPES PAKS')
-        menu.add_row('02', 'REPACK ALL TYPES PAKS')
-        menu.add_row('03', 'REPACK ANY SIZE  •  EXISTING FILES')
-        menu.add_row('04', 'REPACK TO PATH  •  NEW FILES')
-        menu.add_row('05', 'DELETE FOLDER')
+        menu.add_row('01', 'GUIDED PAK WORKFLOW  •  AUTO UNPACK / REPACK')
         menu.add_row('00', 'EXIT')
         console.print(Panel(menu, title=f'[bold {NEON["pink"]}]MAIN MENU[/bold {NEON["pink"]}]',
                             border_style=NEON['blue'], box=ROUNDED, expand=False))
-        console.print(f"[bold {NEON['muted']}]Choose a workflow and press Enter.[/bold {NEON['muted']}]")
+        console.print(f"[bold {NEON['muted']}]One recommended workflow: select a PAK, edit it, then run PakForge again.[/bold {NEON['muted']}]")
         choice = safe_input(f'[bold {NEON["cyan"]}]ENTER YOUR CHOICE:[/bold {NEON["cyan"]}] ').strip()
         
         if choice == '1':
+            guided_pak_workflow(data_path)
+            safe_input('\nPress Enter to continue...')
+            continue
+
+        elif False:
             pak_dir = data_path / "PAK"
             if not pak_dir.exists():
                 console.print(f"[bold red]ERROR: PAK folder not found at {pak_dir}[/]")

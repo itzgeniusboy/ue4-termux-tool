@@ -8,6 +8,10 @@ The generated Termux launcher starts `pakforge_setup.py --background` with `nohu
 
 When setup is ready, the first-run screen transfers control to `pakforge.py`. If setup fails, it displays the recorded failure and points the user to the setup status and log locations instead of hiding the error.
 
+## Guided primary menu
+
+The neon primary UI now presents one recommended **Guided PAK Workflow**. It selects a PAK from `PAK/`, unpacks it to `UNPACK/<name>/` on the first run, and repacks the edited workspace to `RESULT/<name>.pak` on the next run. Advanced CLI workflows remain available but are not shown as beginner-facing menu choices.
+
 ## New command and opt-out
 
 Use the following command to inspect current setup state, the last error, and paths to the setup log and lock:
