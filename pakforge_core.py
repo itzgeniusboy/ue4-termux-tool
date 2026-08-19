@@ -36,7 +36,28 @@ from Crypto.Hash import SHA1
 from Crypto.Util.Padding import unpad
 from zstandard import ZstdDecompressor, ZstdCompressionDict, DICT_TYPE_AUTO, ZstdCompressor
 
-console = Console()
+console = Console(no_color=bool(os.environ.get('NO_COLOR') or os.environ.get('PAKFORGE_PLAIN')))
+
+# ==================== NEON TERMINAL THEME ====================
+NEON = {
+    'purple': '#B026FF',
+    'violet': '#7A2CFF',
+    'blue': '#315CFF',
+    'cyan': '#00E5FF',
+    'green': '#39FF88',
+    'pink': '#FF3DBB',
+    'yellow': '#FFE66D',
+    'red': '#FF4D6D',
+    'muted': '#8B91A7',
+}
+
+
+def themed_prompt(prompt: str) -> str:
+    """Render Rich markup prompts correctly for standard Termux input."""
+    if not prompt:
+        return f"[bold {NEON['purple']}]└──➤[/bold {NEON['purple']}] [bold {NEON['cyan']}]Input:[/bold {NEON['cyan']}] "
+    return prompt
+
 
 # ==================== SIMPLE BLOCK DISPLAY CLASS ====================
 
@@ -1456,12 +1477,23 @@ def ensure_directories(base_dir: Path):
 
 def print_banner():
     os.system('cls' if os.name == 'nt' else 'clear')
-    console.print("[bold cyan]========================================[/bold cyan]")
-    console.print("[bold yellow]    PAK TOOL - UNPACK & REPACK[/bold yellow]")
-    console.print("[bold cyan]========================================[/bold cyan]")
+    logo = Text()
+    logo.append('ＰＡＫＦＯＲＧＥ', style=f"bold {NEON['purple']}")
+    logo.append('\nＮＥＯＮ  ＴＥＲＭＩＮＡＬ  ＳＵＩＴＥ', style=f"bold {NEON['blue']}")
+    logo.append('\nPAK INSPECT  •  UNPACK  •  REPACK', style=f"bold {NEON['green']}")
+    panel = Panel(
+        Align.center(logo),
+        box=DOUBLE_EDGE,
+        border_style=NEON['purple'],
+        padding=(1, 4),
+        title=f"[bold {NEON['cyan']}]BOOT SCRIPT 1.1[/bold {NEON['cyan']}]",
+        subtitle=f"[bold {NEON['pink']}]TERMUX POWER MODE[/bold {NEON['pink']}]",
+        expand=False,
+    )
+    console.print(Align.center(panel))
     console.print()
-    console.print("[bold yellow]PakForge - Termux PAK Utility[/bold yellow]")
-    console.print("[bold green]Authorized project workflow[/bold green]")
+    console.print(f"[bold {NEON['blue']}]┌─[/bold {NEON['blue']}][bold white]pakforge@termux[/bold white][bold {NEON['blue']}]─[/bold {NEON['blue']}][dim]interactive workspace[/dim]")
+    console.print(f"[bold {NEON['pink']}]└──➤[/bold {NEON['pink']}] [bold {NEON['green']}]SYSTEM READY[/bold {NEON['green']}]  [dim]safe local PAK workflow[/dim]")
     console.print()
 
 def get_indian_time():
@@ -1469,8 +1501,12 @@ def get_indian_time():
     return datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
 
 def safe_input(prompt: str='') -> str:
+    rendered = themed_prompt(prompt)
     try:
-        return input(prompt)
+        if '[' in rendered and ']' in rendered:
+            console.print(rendered, end='')
+            return input()
+        return input(rendered)
     except (EOFError, RuntimeError):
         try:
             if sys.platform != 'win32':
@@ -1503,10 +1539,10 @@ def delete_folder(data_path: Path) -> None:
     if not folders:
         console.print('[bold #FFAA00]⚠ No folders found to delete![/bold #FFAA00]')
         return
-    folder_table = Table(title="[bold #FF00FF]📁 AVAILABLE FOLDERS[/bold #FF00FF]", border_style="#00FFFF", box=DOUBLE_EDGE)
-    folder_table.add_column("#", justify="center", style="bold #FFFF00", width=4)
-    folder_table.add_column("Folder Name", justify="left", style="bold #00FF88")
-    folder_table.add_column("Size", justify="right", style="bold #00CCFF")
+    folder_table = Table(title=f"[bold {NEON['pink']}]✦ AVAILABLE FOLDERS[/bold {NEON['pink']}]", border_style=NEON['cyan'], box=DOUBLE_EDGE)
+    folder_table.add_column('#', justify='center', style=f"bold {NEON['yellow']}", width=4)
+    folder_table.add_column('Folder Name', justify='left', style=f"bold {NEON['green']}")
+    folder_table.add_column('Size', justify='right', style=f"bold {NEON['blue']}")
     for i, folder in enumerate(folders, 1):
         folder_size = 0
         for root, dirs, files in os.walk(folder):
@@ -1517,10 +1553,10 @@ def delete_folder(data_path: Path) -> None:
         folder_table.add_row(str(i), folder.name, human_size(folder_size))
     console.print(folder_table)
     try:
-        choice = int(console.input(f"\n[bold #FFFF00]Select folder number (1-{len(folders)}): [/bold #FFFF00]"))
+        choice = int(console.input(f"\n[bold {NEON['cyan']}]Select folder number (1-{len(folders)}): [/bold {NEON['cyan']}]") )
         if 1 <= choice <= len(folders):
             selected_folder = folders[choice - 1]
-            confirm = safe_input(f"[bold #FFFF00]Delete {selected_folder.name}? (yes/no): [/bold #FFFF00]").strip().lower()
+            confirm = safe_input(f"[bold {NEON['yellow']}]Delete {selected_folder.name}? (yes/no): [/bold {NEON['yellow']}]").strip().lower()
             if confirm == 'yes':
                 shutil.rmtree(selected_folder)
                 console.print(f'[bold #00FF88]✅ Deleted: {selected_folder.name}[/bold #00FF88]')
@@ -1536,16 +1572,16 @@ def display_file_selector(title, folder_path, file_pattern="*.pak"):
     if not files:
         console.print(f"[bold red][ERROR] No {file_pattern} files in {folder_path}[/]")
         return None, None
-    selection_table = Table(title=f"[bold cyan]{title}[/]", expand=True, box=ROUNDED, border_style="yellow")
-    selection_table.add_column("[bold yellow]#[/]", justify="center", style="bold yellow", width=4)
-    selection_table.add_column("[bold green]File Name[/]", justify="left", style="bold bright_green")
-    selection_table.add_column("[bold magenta]Size[/]", justify="right", style="bold bright_magenta")
+    selection_table = Table(title=f"[bold {NEON['pink']}]✦ {title}[/]", expand=True, box=ROUNDED, border_style=NEON['purple'])
+    selection_table.add_column(f"[bold {NEON['yellow']}]#[/]", justify='center', style=f"bold {NEON['yellow']}", width=4)
+    selection_table.add_column(f"[bold {NEON['green']}]File Name[/]", justify='left', style=f"bold {NEON['green']}")
+    selection_table.add_column(f"[bold {NEON['blue']}]Size[/]", justify='right', style=f"bold {NEON['blue']}")
     for i, f in enumerate(files, 1):
         size_mb = f.stat().st_size / (1024 * 1024)
         selection_table.add_row(str(i), f.name, f"{size_mb:.2f} MB")
     console.print(selection_table)
     try:
-        idx = int(console.input(f"\n[bold yellow]Select file number (1-{len(files)}): [/]")) - 1
+        idx = int(console.input(f"\n[bold {NEON['cyan']}]Select file number (1-{len(files)}): [/]")) - 1
         if idx < 0 or idx >= len(files):
             console.print("[bold red][ERROR] Invalid selection[/]")
             return None, None
@@ -1562,15 +1598,20 @@ def main_menu():
     ensure_directories(data_path)
     while True:
         print_banner()
-        console.print("[bold]MAIN MENU[/bold]")
-        console.print("1. UNPACK ALL TYPES PAKS")
-        console.print("2. REPACK ALL TYPES PAKS")
-        console.print("3. REPACK ANY SIZE (EXISTING FILES)")
-        console.print("4. REPACK TO PATH (NEW FILES)")
-        console.print("5. DELETE FOLDER")
-        console.print("0. EXIT")
-        print()
-        choice = safe_input('ENTER YOUR CHOICE:').strip()
+        menu = Table(show_header=False, box=ROUNDED, border_style=NEON['purple'],
+                     padding=(0, 2), expand=False)
+        menu.add_column('Key', style=f'bold {NEON["cyan"]}', width=5, justify='center')
+        menu.add_column('Workflow', style='bold white')
+        menu.add_row('01', 'UNPACK ALL TYPES PAKS')
+        menu.add_row('02', 'REPACK ALL TYPES PAKS')
+        menu.add_row('03', 'REPACK ANY SIZE  •  EXISTING FILES')
+        menu.add_row('04', 'REPACK TO PATH  •  NEW FILES')
+        menu.add_row('05', 'DELETE FOLDER')
+        menu.add_row('00', 'EXIT')
+        console.print(Panel(menu, title=f'[bold {NEON["pink"]}]MAIN MENU[/bold {NEON["pink"]}]',
+                            border_style=NEON['blue'], box=ROUNDED, expand=False))
+        console.print(f"[bold {NEON['muted']}]Choose a workflow and press Enter.[/bold {NEON['muted']}]")
+        choice = safe_input(f'[bold {NEON["cyan"]}]ENTER YOUR CHOICE:[/bold {NEON["cyan"]}] ').strip()
         
         if choice == '1':
             pak_dir = data_path / "PAK"

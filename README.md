@@ -17,6 +17,18 @@ PakForge supports direct PAK inspection, extraction, block-aware repacking, batc
 | `pakforge verify` | Detect missing, changed, or extra files against a manifest. |
 | `tool unpack/repack/inject` | Existing repak-based compatibility workflows. |
 
+## Neon terminal theme
+
+PakForge uses a neon terminal presentation inspired by the supplied reference: a dark layout with purple and blue borders, cyan prompts, magenta section titles, green success states, and compact workflow panels. The interactive banner and selectors are designed for Termux screens while keeping the command output readable.
+
+To force plain output for logs, screen readers, or terminals that do not support color, run:
+
+```bash
+PAKFORGE_PLAIN=1 pakforge
+```
+
+The standard `NO_COLOR=1` environment variable is also respected.
+
 ## First-time setup for new Termux users
 
 Install Termux from a trusted source such as [F-Droid](https://f-droid.org/packages/com.termux/) or the [official Termux project](https://github.com/termux/termux-app). Open Termux and enter these commands **one by one**:
