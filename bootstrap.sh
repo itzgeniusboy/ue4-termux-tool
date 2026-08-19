@@ -37,9 +37,11 @@ write_status() {
     project_bytes="$(du -sk "$PROJECT" 2>/dev/null | awk 'NR == 1 {print $1 * 1024}' || printf '0')"
     project_bytes="${project_bytes:-0}"
   fi
+  local status_tmp="$BOOTSTRAP_STATUS.tmp.$$"
   printf '{"state":"%s","stage":"%s","stage_index":%s,"stage_total":%s,"percent":%s,"remaining_percent":%s,"started_at":"%s","started_epoch":%s,"elapsed_seconds":%s,"eta_seconds":%s,"downloaded_bytes":%s,"download_total_bytes":null,"message":"%s","log":"%s"}\n' \
     "$state" "$stage" "$stage_index" "$STAGE_TOTAL" "$percent" "$remaining" "$STARTED_AT" "$STARTED_EPOCH" "$elapsed" "$eta_seconds" "$project_bytes" \
-    "${message//\"/\\\"}" "${BOOTSTRAP_LOG//\"/\\\"}" > "$BOOTSTRAP_STATUS"
+    "${message//\"/\\\"}" "${BOOTSTRAP_LOG//\"/\\\"}" > "$status_tmp"
+  mv -f "$status_tmp" "$BOOTSTRAP_STATUS"
 }
 
 fail() {
@@ -110,7 +112,7 @@ show_first_run() {
     2) spinner='-' ;;
     3) spinner='\\' ;;
   esac
-  printf '\033[2J\033[H'
+  printf '\033[H\033[J'
   printf '%bPakForge Launcher — OPEN%b\n' "$PINK" "$RESET"
   printf '%bFull PakForge menu is preparing automatically.%b\n\n' "$CYAN" "$RESET"
   printf 'This launcher is active now; no second command is needed.\n'
@@ -127,11 +129,34 @@ show_first_run() {
   printf 'The full PAK/Lua menu will open automatically when ready.\n'
 }
 
+run_with_heartbeat() {
+  local label="$1"
+  local start_percent="$2"
+  local end_percent="$3"
+  local stage_index="$4"
+  shift 4
+  ("$@") &
+  local child="$!"
+  local percent="$start_percent"
+  while kill -0 "$child" 2>/dev/null; do
+    write_status running "$label" "$percent" "$stage_index" "$label"
+    if [ "$percent" -lt $((end_percent - 1)) ]; then
+      percent=$((percent + 1))
+    fi
+    sleep 1
+  done
+  if wait "$child"; then
+    write_status running "$label complete" "$end_percent" "$stage_index" "$label complete"
+    return 0
+  fi
+  return 1
+}
+
 setup_bootstrap() {
   write_status running "Preparing Termux packages" 5 1 "Preparing Termux packages"
   printf '%s\n' "[1/4] Preparing Termux packages..."
-  pkg update -y || return 1
-  pkg install -y curl git python python-pip unzip rust || return 1
+  run_with_heartbeat "Updating Termux package lists" 5 10 1 pkg update -y || return 1
+  run_with_heartbeat "Installing minimum Termux packages" 10 20 1 pkg install -y curl git python python-pip unzip rust || return 1
 
   write_status running "Enabling Android storage access" 25 2 "Enabling Android storage access"
   printf '%s\n' "[2/4] Enabling Android storage access..."
@@ -139,24 +164,23 @@ setup_bootstrap() {
     termux-setup-storage || true
   fi
 
-  write_status running "Downloading PakForge repository" 45 3 "Downloading PakForge"
+  write_status running "Downloading PakForge repository" 35 3 "Downloading PakForge"
   if [ -d "$PROJECT/.git" ]; then
     printf '%s\n' "[3/4] Updating existing PakForge files..."
-    git -C "$PROJECT" pull --ff-only || return 1
+    run_with_heartbeat "Updating PakForge repository" 35 65 3 git -C "$PROJECT" pull --ff-only || return 1
   else
     if [ -e "$PROJECT" ]; then
       printf '%s\n' "PakForge directory exists but is not a Git checkout." >&2
       return 1
     fi
     printf '%s\n' "[3/4] Downloading PakForge..."
-    git clone --depth 1 "$REPO" "$PROJECT" || return 1
+    run_with_heartbeat "Downloading PakForge repository" 35 65 3 git clone --depth 1 "$REPO" "$PROJECT" || return 1
   fi
 
   write_status running "Creating PakForge launcher" 75 4 "Creating PakForge launcher"
   printf '%s\n' "[4/4] Creating the PakForge launcher..."
   cd "$PROJECT"
-  chmod +x install-termux.sh ue4tool.py pakforge.py pakforge_setup.py pakforge_first_run.py update-termux.sh
-  PAKFORGE_DEFER_SETUP=1 SKIP_PACKAGES=1 bash install-termux.sh || return 1
+  run_with_heartbeat "Creating PakForge launcher" 75 95 4 bash -c 'chmod +x install-termux.sh ue4tool.py pakforge.py pakforge_setup.py pakforge_first_run.py update-termux.sh && PAKFORGE_DEFER_SETUP=1 SKIP_PACKAGES=1 bash install-termux.sh' || return 1
   write_status ready "PakForge launcher is ready" 100 5 "PakForge launcher ready"
   return 0
 }

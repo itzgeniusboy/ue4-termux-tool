@@ -84,7 +84,7 @@ def show_status(status: dict, tick: int = 0) -> None:
         accent = ""
         reset = ""
     else:
-        clear = "\033[2J\033[H"
+        clear = "\033[H\033[J"
         accent = "\033[1;36m"
         reset = "\033[0m"
     print(f"{clear}PakForge Launcher — OPEN")
