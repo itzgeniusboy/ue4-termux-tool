@@ -44,7 +44,31 @@ exec python3 "$SCRIPT_DIR/ue4tool.py" "\$@"
 EOF
 cat > "$BIN_DIR/pakforge" <<EOF
 #!/data/data/com.termux/files/usr/bin/bash
-exec python3 "$SCRIPT_DIR/pakforge.py" "\$@"
+set -euo pipefail
+SCRIPT_DIR="$SCRIPT_DIR"
+STATE_DIR="\${XDG_STATE_HOME:-\$HOME/.local/state}/pakforge"
+mkdir -p "\$STATE_DIR"
+
+if ! python3 -c 'import rich, pytz, gmalg, Crypto, zstandard' >/dev/null 2>&1; then
+  printf '%s\n' "PakForge dependencies are missing; installing them now..."
+  python3 -m pip install --upgrade rich pytz gmalg pycryptodome zstandard
+fi
+
+if [ "\${PAKFORGE_NO_UPDATE:-0}" != "1" ] && [ -d "\$SCRIPT_DIR/.git" ]; then
+  LOCK="\$STATE_DIR/update.lock"
+  LOG="\$STATE_DIR/update.log"
+  if mkdir "\$LOCK" 2>/dev/null; then
+    (
+      trap 'rmdir "\$LOCK" 2>/dev/null || true' EXIT
+      cd "\$SCRIPT_DIR"
+      git fetch --quiet origin main && git merge --ff-only --quiet origin/main \\
+        && printf '%s PakForge updated in background\\n' "\$(date -Iseconds)" >> "\$LOG" \\
+        || true
+    ) >/dev/null 2>&1 &
+  fi
+fi
+
+exec python3 "\$SCRIPT_DIR/pakforge.py" "\$@"
 EOF
 chmod 0755 "$BIN_DIR/tool" "$BIN_DIR/pakforge"
 

@@ -41,13 +41,13 @@ termux-setup-storage
 
 Press **Allow** when Android asks for permission.
 
-**Step 4 — download and install the tool:**
+**Step 4 — first-time install with one command:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/itzgeniusboy/ue4-termux-tool/main/setup.sh | bash
+curl -fsSL https://raw.githubusercontent.com/itzgeniusboy/ue4-termux-tool/main/bootstrap.sh | bash
 ```
 
-The public repository does not require GitHub login. The setup automatically installs Python parser dependencies, downloads the project, builds `repak` for the compatibility wrapper, installs both `pakforge` and `tool`, verifies the installation, and shows any error clearly. The first installation can take several minutes because Rust builds `repak`; do not close Termux during that step.
+The public repository does not require GitHub login. This single command installs the required packages, downloads PakForge, installs the Python parser dependencies, builds `repak` for the compatibility wrapper, and creates both `pakforge` and `tool` commands. The first installation can take several minutes because Rust builds `repak`; do not close Termux during that step.
 
 **Step 5 — open PakForge:**
 
@@ -55,7 +55,7 @@ The public repository does not require GitHub login. The setup automatically ins
 pakforge
 ```
 
-The original repak wrapper remains available as `tool`. The setup can be run again later to repair or refresh the installation.
+The original repak wrapper remains available as `tool`. The same first-run command can be run again later to repair or refresh the installation.
 
 ## Manual setup
 
@@ -69,7 +69,7 @@ termux-setup-storage
 cd ~
 git clone https://github.com/itzgeniusboy/ue4-termux-tool.git
 cd ue4-termux-tool
-chmod +x install-termux.sh ue4tool.py pakforge.py update-termux.sh
+chmod +x bootstrap.sh install-termux.sh ue4tool.py pakforge.py update-termux.sh
 bash install-termux.sh
 ```
 
@@ -87,7 +87,7 @@ After setup, run this single command:
 pakforge
 ```
 
-The command opens the PakForge menu immediately. The compatibility command `tool` retains the repository's background update check and repak-based menu. To skip automatic updating for one compatibility launch, use `TOOL_NO_AUTO_UPDATE=1 tool`.
+The command opens the PakForge menu immediately. Each launch checks for missing Python dependencies and starts a safe, non-blocking fast-forward update check in the background. The update log is stored at `~/.local/state/pakforge/update.log`. To disable one background update check, use `PAKFORGE_NO_UPDATE=1 pakforge`. The compatibility command `tool` remains available for repak-based workflows.
 
 The menu provides:
 
@@ -103,7 +103,7 @@ The menu provides:
 0) Exit
 ```
 
-The PakForge menu searches `/sdcard/Download/` for `.pak` files, shows parser-specific metadata, extracts with progress, creates debug logs and manifests, and supports the original PAK/EDIT/RESULT folder workflow. The `tool` menu continues to check `repak` and supports Lua injection.
+The PakForge menu searches `/sdcard/Download/` for `.pak` files, shows parser-specific metadata, extracts with progress, creates debug logs and manifests, and supports the original PAK/EDIT/RESULT folder workflow. Its background update runs separately, so opening the menu does not wait for a download. The `tool` menu continues to check `repak` and supports Lua injection.
 
 If the menu cannot find a file, enter its full path when prompted. Storage permission is enabled by running:
 
