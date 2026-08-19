@@ -189,7 +189,7 @@ pakforge detect /sdcard/Download/game.pak --json
 
 ### One-command Lua pipeline
 
-The Lua pipeline performs detection, Lua file discovery, target-prefix mapping, repack, and post-repack verification. Use `--compile-lua` when the edited directory contains Lua source and the target offline project expects Lua 5.1 bytecode; PakForge checks `luac5.1` and then `luac51` before any generic fallback. PakForge does not auto-download executable compilers. Use `--dry-run` to generate a plan without writing an output PAK:
+The Lua pipeline performs detection, Lua file discovery, target-prefix mapping, repack, and post-repack verification. Use `--compile-lua` when the edited directory contains Lua source and the target offline project expects Lua 5.1 bytecode. PakForge checks `luac5.1` and then `luac51`; if neither exists, it transparently runs the official package manager in the foreground (`pkg install lua51 -y`, `sudo apt install lua5.1 -y`, or `sudo pacman -S lua51 --noconfirm`) and prints the exact command. No raw URL or downloaded binary is used. Use `--dry-run` to generate a plan without writing an output PAK:
 
 ```bash
 pakforge lua-pipeline \

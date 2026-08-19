@@ -15,6 +15,7 @@ import importlib.util
 import platform
 import re
 import shutil
+import shlex
 import subprocess
 import sys
 import time
@@ -37,7 +38,7 @@ except ImportError as exc:
     ) from exc
 
 APP_NAME = "PakForge"
-VERSION = "1.3.1"
+VERSION = "1.3.2"
 MANIFEST_NAME = ".pakforge-manifest.json"
 CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "pakforge"
 PROFILE_DIRECTORY = CONFIG_HOME / "profiles"
@@ -520,7 +521,9 @@ def lua_pipeline_command(args: argparse.Namespace) -> None:
     try:
         pack_root = lua_root
         if staging is not None:
-            pack_root, compiler = compile_lua_sources(lua_root, lua_files, Path(staging.name))
+            # Resolve or install Lua 5.1 before creating bytecode staging.
+            compiler = ensure_lua51_installed()
+            pack_root, _ = compile_lua_sources(lua_root, lua_files, Path(staging.name), compiler=compiler)
             report["lua_compiler"] = compiler
         count = repack_pak_file_full(pak, pack_root, output, target_path=target_prefix, force_add=True)
         if count <= 0:
@@ -687,37 +690,130 @@ def normalize_target_prefix(value: str | None) -> str | None:
     return '/'.join(parts)
 
 
-def find_lua51_compiler() -> str:
-    """Return a Lua 5.1 compiler, never silently preferring Lua 5.3+.
-
-    Lua bytecode is version-specific.  A generic ``luac`` executable is only
-    accepted when the caller explicitly sets ``PAKFORGE_ALLOW_NON51_LUAC=1``;
-    PakForge does not download untrusted binaries into Termux automatically.
-    Install a trusted distro package or set ``PAKFORGE_LUAC51`` to an audited
-    local executable instead.
-    """
+def _find_lua51_compiler() -> str | None:
+    """Find an explicitly configured or PATH-provided Lua 5.1 compiler."""
     candidates = []
     configured = os.environ.get('PAKFORGE_LUAC51')
     if configured:
         candidates.append(configured)
+    # Keep the version-specific names ahead of generic ``luac``.  Lua bytecode
+    # is not portable between 5.1 and later Lua versions.
     candidates.extend(('luac5.1', 'luac51'))
     for candidate in candidates:
         resolved = shutil.which(candidate) if os.path.basename(candidate) == candidate else candidate
         if resolved and Path(resolved).is_file() and os.access(resolved, os.X_OK):
             return str(Path(resolved).resolve())
+    return None
+
+
+def find_lua51_compiler() -> str:
+    """Return a Lua 5.1 compiler without installing anything.
+
+    This pure detection helper is intentionally side-effect free.  The
+    compile pipeline calls :func:`ensure_lua51_installed` when it needs the
+    transparent package-manager installation path.
+    """
+    compiler = _find_lua51_compiler()
+    if compiler:
+        return compiler
     if os.environ.get('PAKFORGE_ALLOW_NON51_LUAC') == '1':
         fallback = shutil.which('luac')
         if fallback:
-            return fallback
+            return str(Path(fallback).resolve())
     raise SystemExit(
-        'Lua 5.1 compiler not found. Install luac5.1/luac51 from a trusted '
-        'Termux source or set PAKFORGE_LUAC51=/absolute/path/to/luac5.1.'
+        'Lua 5.1 compiler not found. Run the Lua pipeline with its automatic '
+        'installer enabled, install luac5.1/luac51 using your official package '
+        'manager, or set PAKFORGE_LUAC51=/absolute/path/to/luac5.1.'
     )
 
 
-def compile_lua_sources(lua_root: Path, lua_files: list[Path], staging_root: Path) -> tuple[Path, str]:
-    """Compile Lua sources with the selected Lua 5.1 compiler into staging."""
-    compiler = find_lua51_compiler()
+def _manual_lua51_instruction(manager: str | None = None) -> str:
+    instructions = {
+        'pkg': 'pkg install lua51 -y',
+        'apt': 'sudo apt install lua5.1 -y',
+        'pacman': 'sudo pacman -S lua51 --noconfirm',
+    }
+    command = instructions.get(manager or '', 'Install Lua 5.1 using your operating system package manager')
+    return f'Lua 5.1 compiler is still unavailable. Run: {command}, then rerun `pakforge lua-pipeline --compile-lua`.'
+
+
+def ensure_lua51_installed() -> str:
+    """Ensure Lua 5.1 exists using only the host's official package manager.
+
+    The package command runs in the foreground with inherited terminal I/O so
+    users can see exactly what is being installed and answer a sudo prompt if
+    their platform requires it.  No shell, remote URL, downloaded binary, or
+    opaque background process is used.
+    """
+    compiler = _find_lua51_compiler()
+    if compiler:
+        return compiler
+
+    manager = None
+    if shutil.which('pkg'):
+        manager = 'pkg'
+    elif shutil.which('apt'):
+        manager = 'apt'
+    elif shutil.which('pacman'):
+        manager = 'pacman'
+
+    if manager is None:
+        message = _manual_lua51_instruction()
+        print(f'[PakForge] [ERROR] {message}', file=sys.stderr)
+        raise SystemExit(2)
+
+    if manager == 'pkg':
+        command = ['pkg', 'install', 'lua51', '-y']
+    elif manager == 'apt':
+        command = ['apt', 'install', 'lua5.1', '-y']
+        if os.geteuid() != 0:
+            sudo = shutil.which('sudo')
+            if not sudo:
+                message = _manual_lua51_instruction('apt') + ' `sudo` was not found; run it as root or install sudo.'
+                print(f'[PakForge] [ERROR] {message}', file=sys.stderr)
+                raise SystemExit(2)
+            command.insert(0, sudo)
+    else:
+        command = ['pacman', '-S', 'lua51', '--noconfirm']
+        if os.geteuid() != 0:
+            sudo = shutil.which('sudo')
+            if not sudo:
+                message = _manual_lua51_instruction('pacman') + ' `sudo` was not found; run it as root or install sudo.'
+                print(f'[PakForge] [ERROR] {message}', file=sys.stderr)
+                raise SystemExit(2)
+            command.insert(0, sudo)
+
+    print(f'[PakForge] [INFO] Lua 5.1 compiler not found. Installing via {manager}...')
+    print(f'[PakForge] [INFO] Command: {shlex.join(command)}')
+    try:
+        completed = subprocess.run(command, check=False)
+    except OSError as exc:
+        print(f'[PakForge] [ERROR] Could not start {manager}: {exc}', file=sys.stderr)
+        print(f'[PakForge] [HELP] {_manual_lua51_instruction(manager)}', file=sys.stderr)
+        raise SystemExit(2) from exc
+
+    compiler = _find_lua51_compiler()
+    if completed.returncode == 0 and compiler:
+        print('[PakForge] [OK] Lua 5.1 compiler installation successful.')
+        return compiler
+
+    print(
+        f'[PakForge] [ERROR] {manager} exited with status {completed.returncode}; '
+        'luac5.1/luac51 is still unavailable.',
+        file=sys.stderr,
+    )
+    print(f'[PakForge] [HELP] {_manual_lua51_instruction(manager)}', file=sys.stderr)
+    raise SystemExit(2)
+
+
+def compile_lua_sources(
+    lua_root: Path,
+    lua_files: list[Path],
+    staging_root: Path,
+    compiler: str | None = None,
+) -> tuple[Path, str]:
+    """Compile Lua sources with a resolved Lua 5.1 compiler into staging."""
+    compiler = compiler or ensure_lua51_installed()
     compiled_root = staging_root / 'lua51-bytecode'
     compiled_root.mkdir(parents=True, exist_ok=True)
     for source in lua_files:

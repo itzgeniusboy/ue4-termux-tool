@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pakforge
 from pakforge_core import (
@@ -77,9 +78,63 @@ def main() -> None:
         finally:
             os.environ["PATH"] = previous_path
 
+    with tempfile.TemporaryDirectory(prefix="pakforge-luac-install-") as compiler_dir:
+        expected_compiler = str(Path(compiler_dir) / "luac5.1")
+        with patch.object(
+            pakforge,
+            "_find_lua51_compiler",
+            side_effect=[None, expected_compiler],
+        ), patch.object(
+            pakforge.shutil,
+            "which",
+            side_effect=lambda name: "/data/data/com.termux/files/usr/bin/pkg" if name == "pkg" else None,
+        ), patch.object(
+            pakforge.subprocess,
+            "run",
+            return_value=subprocess.CompletedProcess(["pkg"], 0),
+        ) as package_run:
+            assert pakforge.ensure_lua51_installed() == expected_compiler
+            package_run.assert_called_once_with(["pkg", "install", "lua51", "-y"], check=False)
+
+    for manager, expected_command in (
+        ("apt", ["/usr/bin/sudo", "apt", "install", "lua5.1", "-y"]),
+        ("pacman", ["/usr/bin/sudo", "pacman", "-S", "lua51", "--noconfirm"]),
+    ):
+        with tempfile.TemporaryDirectory(prefix=f"pakforge-{manager}-") as compiler_dir:
+            expected_compiler = str(Path(compiler_dir) / "luac5.1")
+            def fake_which(name: str, selected: str = manager) -> str | None:
+                if name == selected:
+                    return f"/usr/bin/{selected}"
+                if name == "sudo":
+                    return "/usr/bin/sudo"
+                return None
+            with patch.object(
+                pakforge,
+                "_find_lua51_compiler",
+                side_effect=[None, expected_compiler],
+            ), patch.object(pakforge.shutil, "which", side_effect=fake_which), patch.object(
+                pakforge.os, "geteuid", return_value=1000
+            ), patch.object(
+                pakforge.subprocess,
+                "run",
+                return_value=subprocess.CompletedProcess(expected_command, 0),
+            ) as package_run:
+                assert pakforge.ensure_lua51_installed() == expected_compiler
+                package_run.assert_called_once_with(expected_command, check=False)
+
+    with patch.object(pakforge, "_find_lua51_compiler", return_value=None), patch.object(
+        pakforge.shutil, "which", return_value=None
+    ):
+        try:
+            pakforge.ensure_lua51_installed()
+        except SystemExit as exc:
+            assert exc.code == 2
+        else:
+            raise AssertionError("unknown package-manager host did not fail gracefully")
+
     version = run("--version")
     assert version.returncode == 0
-    assert version.stdout.strip() == "PakForge 1.3.1"
+    assert version.stdout.strip() == "PakForge 1.3.2"
 
     with tempfile.TemporaryDirectory(prefix="pakforge-test-") as raw:
         root = Path(raw)
