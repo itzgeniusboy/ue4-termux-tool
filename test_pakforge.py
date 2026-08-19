@@ -43,7 +43,7 @@ def main() -> None:
 
     version = run("--version")
     assert version.returncode == 0
-    assert version.stdout.strip() == "PakForge 1.1.0"
+    assert version.stdout.strip() == "PakForge 1.2.0"
 
     with tempfile.TemporaryDirectory(prefix="pakforge-test-") as raw:
         root = Path(raw)
@@ -81,9 +81,21 @@ def main() -> None:
         assert "Operation log saved locally:" in failure.stderr
         native_logs = list((state / "pakforge" / "logs").glob("operation-*.jsonl"))
         assert native_logs
-        native_log = native_logs[0].read_text(encoding="utf-8")
-        assert "unexpected_exception" in native_log
-        assert "unpack_from" in native_log
+        native_log = max(native_logs, key=lambda path: path.stat().st_mtime).read_text(encoding="utf-8")
+        assert "operation_failed" in native_log
+        assert "PAK format was not recognized" in native_log
+
+        detected = run("detect", str(invalid), "--json")
+        assert detected.returncode == 2
+        detection_payload = json.loads(detected.stdout)
+        assert detection_payload["status"] == "unsupported_or_invalid"
+        assert detection_payload["recommendations"]
+
+    lua_help = run("lua-pipeline", "--help")
+    assert lua_help.returncode == 0
+    assert "--target-prefix" in lua_help.stdout
+    assert "--dry-run" in lua_help.stdout
+    assert "--verify" in lua_help.stdout
 
     print("pakforge-tests-ok")
 

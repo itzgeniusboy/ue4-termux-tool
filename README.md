@@ -174,6 +174,44 @@ Legacy-wrapper logs are stored under `~/.local/state/tool/logs/`; native PakForg
 
 The shortest command forms are:
 
+### Adaptive format detection
+
+PakForge can try the standard and OD parser modes automatically, then report the detected PAK version, mount point, compression, encryption, ZSTD dictionary state, and supported workflows:
+
+```bash
+pakforge detect /sdcard/Download/game.pak
+pakforge detect /sdcard/Download/game.pak --json
+```
+
+### One-command Lua pipeline
+
+The Lua pipeline performs detection, Lua file discovery, target-prefix mapping, repack, and post-repack verification. Use `--dry-run` to generate a plan without writing an output PAK:
+
+```bash
+pakforge lua-pipeline \
+  --pak /sdcard/Download/game.pak \
+  --lua-dir /sdcard/Download/MyLua \
+  --target-prefix Content/Lua/Mods \
+  --output /sdcard/Download/game-lua.pak \
+  --overwrite \
+  --verify
+```
+
+If the output should only be planned first:
+
+```bash
+pakforge lua-pipeline \
+  --pak /sdcard/Download/game.pak \
+  --lua-dir /sdcard/Download/MyLua \
+  --target-prefix Content/Lua/Mods \
+  --output /sdcard/Download/game-lua.pak \
+  --dry-run
+```
+
+The pipeline automatically reports when the PAK is invalid or unsupported and writes a JSON report after a verified repack. Use `--is-od` when the project is known to require OD parsing.
+
+The shortest command forms are:
+
 ```bash
 tool unpack input.pak unpacked-folder
 tool repack unpacked-folder output.pak

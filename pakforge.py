@@ -32,7 +32,7 @@ except ImportError as exc:
     ) from exc
 
 APP_NAME = "PakForge"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 MANIFEST_NAME = ".pakforge-manifest.json"
 
 
@@ -212,9 +212,143 @@ def inventory(pak: TencentPakFile) -> list[dict]:
     return sorted(rows, key=lambda item: item["path"].lower())
 
 
+def open_pak_auto(path: Path, requested_od: bool = False) -> tuple[TencentPakFile, bool, list[dict]]:
+    attempts: list[dict] = []
+    modes = [True] if requested_od else [False, True]
+    for is_od in modes:
+        try:
+            pak = TencentPakFile(path, is_od=is_od)
+            return pak, is_od, attempts
+        except Exception as exc:
+            attempts.append({"is_od": is_od, "error": f"{type(exc).__name__}: {exc}"})
+    details = "; ".join(f"is_od={item['is_od']}: {item['error']}" for item in attempts)
+    raise SystemExit(f"PAK format was not recognized. Attempts: {details}")
+
+
+def capability_payload(path: Path, pak: TencentPakFile, is_od: bool) -> dict:
+    rows = inventory(pak)
+    compression = {}
+    encryption = {}
+    for row in rows:
+        compression[row["compression"]] = compression.get(row["compression"], 0) + 1
+        encryption[row["encryption"]] = encryption.get(row["encryption"], 0) + 1
+    return {
+        "status": "supported",
+        "pak": str(path),
+        "parser_mode": "od" if is_od else "standard",
+        "pak_version": pak._pak_info.version,
+        "mount_point": str(pak._mount_point),
+        "entries": len(rows),
+        "compression": dict(sorted(compression.items())),
+        "encryption": dict(sorted(encryption.items())),
+        "index_encrypted": bool(pak._pak_info.index_encrypted),
+        "zstd_dictionary": bool(getattr(pak, "_zstd_dict", None)),
+        "capabilities": {
+            "unpack": True,
+            "repack": True,
+            "lua_target_inject": True,
+            "manifest": True,
+            "post_repack_verify": True,
+        },
+    }
+
+
+def detect_command(args: argparse.Namespace) -> None:
+    path = require_file(args.pak, "PAK")
+    try:
+        pak, is_od, attempts = open_pak_auto(path, args.is_od)
+        payload = capability_payload(path, pak, is_od)
+        payload["attempts"] = attempts
+    except SystemExit as exc:
+        payload = {
+            "status": "unsupported_or_invalid",
+            "pak": str(path),
+            "error": str(exc),
+            "recommendations": [
+                "Confirm the file is a complete PAK, not a split or downloaded partial file.",
+                "Try the compatibility `tool info` command for standard repak-supported PAKs.",
+                "If the PAK is encrypted, provide the known project key through the supported command option.",
+            ],
+        }
+        if args.json:
+            print(json.dumps(payload, indent=2))
+        else:
+            print(f"Status: {payload['status']}")
+            print(f"PAK: {path}")
+            print(f"Reason: {payload['error']}")
+            print("Next checks:")
+            for item in payload["recommendations"]:
+                print(f"- {item}")
+        raise SystemExit(2)
+    if args.json:
+        print(json.dumps(payload, indent=2))
+        return
+    print(f"Status: {payload['status']}")
+    print(f"Parser mode: {payload['parser_mode']}")
+    print(f"PAK version: {payload['pak_version']}")
+    print(f"Mount point: {payload['mount_point']}")
+    print(f"Entries: {payload['entries']}")
+    print("Compression: " + ", ".join(f"{name}={count}" for name, count in payload["compression"].items()))
+    print("Encryption: " + ", ".join(f"{name}={count}" for name, count in payload["encryption"].items()))
+    print(f"Index encrypted: {'yes' if payload['index_encrypted'] else 'no'}")
+    print(f"ZSTD dictionary: {'yes' if payload['zstd_dictionary'] else 'no'}")
+    print("Recommended workflow: lua-pipeline" if payload["capabilities"]["lua_target_inject"] else "Recommended workflow: inspect only")
+
+
+def lua_pipeline_command(args: argparse.Namespace) -> None:
+    source = require_file(args.pak, "Source PAK")
+    lua_root = require_dir(args.lua_dir, "Lua directory")
+    lua_files = sorted(path for path in lua_root.rglob("*.lua") if path.is_file())
+    if not lua_files:
+        raise SystemExit(f"No .lua files found in: {lua_root}")
+    target_prefix = normalize_target_prefix(args.target_prefix or "Script")
+    output = Path(args.output).expanduser()
+    refuse_existing(output, args.overwrite)
+    pak, is_od, attempts = open_pak_auto(source, args.is_od)
+    report = {
+        "tool": APP_NAME,
+        "version": VERSION,
+        "source_pak": str(source),
+        "output_pak": str(output),
+        "lua_directory": str(lua_root),
+        "lua_files": [path.relative_to(lua_root).as_posix() for path in lua_files],
+        "target_prefix": target_prefix,
+        "parser_mode": "od" if is_od else "standard",
+        "attempts": attempts,
+        "dry_run": bool(args.dry_run),
+    }
+    if args.dry_run:
+        report_path = Path(args.report).expanduser() if args.report else output.with_suffix(output.suffix + ".plan.json")
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report["status"] = "planned"
+        report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        print(f"Dry run: {len(lua_files)} Lua file(s) would be added under {target_prefix}")
+        print(f"Plan: {report_path}")
+        return
+    output.parent.mkdir(parents=True, exist_ok=True)
+    count = repack_pak_file_full(pak, lua_root, output, target_path=target_prefix, force_add=True)
+    if count <= 0:
+        raise SystemExit("Lua pipeline produced no files.")
+    verified = TencentPakFile(output, is_od=is_od)
+    verified_paths = {row["path"] for row in inventory(verified)}
+    expected = {f"{target_prefix}/{relative}" for relative in report["lua_files"]}
+    missing = sorted(expected - verified_paths)
+    if missing:
+        raise SystemExit("Post-repack verification failed; missing Lua paths: " + ", ".join(missing[:10]))
+    report["status"] = "verified"
+    report["injected_count"] = count
+    report["verified_count"] = len(expected)
+    report_path = Path(args.report).expanduser() if args.report else output.with_suffix(output.suffix + ".lua-report.json")
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    print(f"Lua pipeline complete: {count} file(s) added under {target_prefix}")
+    print(f"Verified output: {output}")
+    print(f"Report: {report_path}")
+
+
 def info_command(args: argparse.Namespace) -> None:
     pak_path = require_file(args.pak, "PAK")
-    pak = TencentPakFile(pak_path, is_od=args.is_od)
+    pak, detected_od, _ = open_pak_auto(pak_path, args.is_od)
     rows = inventory(pak)
     compression = {}
     encryption = {}
@@ -231,6 +365,7 @@ def info_command(args: argparse.Namespace) -> None:
         "tool": APP_NAME,
         "version": VERSION,
         "pak": str(pak_path),
+        "parser_mode": "od" if detected_od else "standard",
         "pak_version": pak._pak_info.version,
         "mount_point": str(pak._mount_point),
         "index_encrypted": summary["encrypted_index"],
@@ -261,7 +396,7 @@ def unpack_command(args: argparse.Namespace) -> None:
         raise SystemExit(f"Output path exists as a file: {output}")
     if output.exists() and any(output.iterdir()) and not args.overwrite:
         raise SystemExit(f"Output directory is not empty: {output}. Use --overwrite only after keeping a backup.")
-    pak = TencentPakFile(pak_path, is_od=args.is_od)
+    pak, _, _ = open_pak_auto(pak_path, args.is_od)
     pak.dump(output)
     log_path = output / f"Debug_{pak_path.stem}.log"
     dump_unpacking_log(pak, log_path)
@@ -306,7 +441,7 @@ def repack_command(args: argparse.Namespace) -> None:
     edited = require_dir(args.edited_dir, "Edited directory")
     output = Path(args.output).expanduser()
     refuse_existing(output, args.overwrite)
-    pak = TencentPakFile(source_pak, is_od=args.is_od)
+    pak, _, _ = open_pak_auto(source_pak, args.is_od)
     output.parent.mkdir(parents=True, exist_ok=True)
     target_prefix = normalize_target_prefix(args.target_prefix)
     if target_prefix:
@@ -326,6 +461,24 @@ def parser() -> argparse.ArgumentParser:
     cli.add_argument("--version", action="version", version=f"PakForge {VERSION}")
     sub = cli.add_subparsers(dest="command")
     sub.add_parser("menu", help="open the original interactive PAK menu")
+
+    detect = sub.add_parser("detect", help="detect PAK mode and report supported capabilities")
+    detect.add_argument("pak")
+    detect.add_argument("--json", action="store_true")
+    detect.add_argument("--is-od", action="store_true")
+    detect.set_defaults(func=detect_command)
+
+    lua = sub.add_parser("lua-pipeline", help="detect, inject Lua files, repack, and verify")
+    lua.add_argument("--pak", required=True)
+    lua.add_argument("--lua-dir", required=True)
+    lua.add_argument("--output", required=True)
+    lua.add_argument("--target-prefix", default="Script")
+    lua.add_argument("--report")
+    lua.add_argument("--dry-run", action="store_true")
+    lua.add_argument("--verify", action="store_true", help="verify the repacked PAK (verification is enabled by default)")
+    lua.add_argument("--overwrite", action="store_true")
+    lua.add_argument("--is-od", action="store_true")
+    lua.set_defaults(func=lua_pipeline_command)
 
     info = sub.add_parser("info", help="inspect entries, compression, encryption, and sizes")
     info.add_argument("pak")
