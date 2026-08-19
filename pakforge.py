@@ -35,7 +35,7 @@ try:
         ROUNDED,
         safe_input,
         print_banner,
-        guided_pak_workflow,
+        main_menu,
         display_file_selector,
         repack_pak_file_full,
         repack_pak_file_patch,
@@ -1261,7 +1261,7 @@ def _menu_pause() -> None:
 
 
 def _menu_guided(data_path: Path) -> None:
-    guided_pak_workflow(data_path)
+    main_menu()
 
 
 def pakforge_control_center() -> None:
@@ -1506,7 +1506,7 @@ def main() -> int:
     try:
         if args.command in (None, "menu"):
             operation.event("menu_started")
-            pakforge_control_center()
+            main_menu()
             operation.event("operation_succeeded")
             return 0
         operation.event("handler_started", handler=getattr(args.func, "__name__", str(args.func)))

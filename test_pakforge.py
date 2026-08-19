@@ -317,17 +317,30 @@ def main() -> None:
         assert output.read_bytes() == b"verified-pak"
 
     cli_source = (ROOT / "pakforge.py").read_text(encoding="utf-8")
-    assert "PAKFORGE CONTROL CENTER" in cli_source
-    assert "Guided PAK workflow  •  auto unpack / repack" in cli_source
-    assert 'menu.add_row("1", "Guided PAK workflow' in cli_source
-    assert 'menu.add_row("01"' not in cli_source
-    assert 'menu.add_row("0", "Exit")' in cli_source
-    assert 'menu.add_row("00"' not in cli_source
-    assert "pakforge_control_center()" in cli_source
+    assert "main_menu()" in cli_source
+    assert "pakforge_control_center()" not in cli_source[cli_source.index("def main("):]
     assert "def _menu_select_pak" in cli_source
     assert "def _menu_workspace" in cli_source
     assert "_menu_path" not in cli_source
-    assert "Running selected workflow" in cli_source
+
+    core_source = (ROOT / "pakforge_core.py").read_text(encoding="utf-8")
+    assert 'SDCARD_DOWNLOAD_DIR = Path("/sdcard/Download")' in core_source
+    assert 'SDCARD_EDIT_DIR = SDCARD_DOWNLOAD_DIR / "EDIT"' in core_source
+    assert 'SDCARD_UNPACKED_DIR = SDCARD_DOWNLOAD_DIR / "UNPACKED"' in core_source
+    assert "def get_pak_files_from_sdcard()" in core_source
+    assert "def select_pak_from_sdcard(" in core_source
+    assert "def unpack_selected_sdcard_pak()" in core_source
+    assert "def repack_selected_sdcard_pak()" in core_source
+    assert "No .pak files found in /sdcard/Download/. Please copy your PAK file there." in core_source
+    assert "EDIT folder is empty. Place your modified .lua or .luac files in /sdcard/Download/EDIT/ first." in core_source
+    assert 'output_pak = SDCARD_DOWNLOAD_DIR / f"MODDED_{pak_file.name}"' in core_source
+    core_menu = core_source[core_source.index("def main_menu():"):]
+    assert 'UNPACK PAK' in core_menu
+    assert 'REPACK PAK (with Lua injection)' in core_menu
+    assert 'EXIT' in core_menu
+    assert 'PAK TOOL' not in core_menu
+    assert 'data_path / "PAK"' not in core_menu
+    assert 'data_path / "RESULT"' not in core_menu
 
     version = run("--version")
     assert version.returncode == 0

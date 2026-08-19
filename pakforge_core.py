@@ -2053,17 +2053,61 @@ def repack_gamepatch(pak, repack_dir, output_pak):
     pak._zstd_dict = None
     repack_pak_file_with_block_display(pak_file=pak, edited_root=repack_dir, output_path=output_pak)
 
-def ensure_directories(base_dir: Path):
-    (base_dir / "PAK").mkdir(parents=True, exist_ok=True)
-    (base_dir / "UNPACK").mkdir(parents=True, exist_ok=True)
-    (base_dir / "REPACK").mkdir(parents=True, exist_ok=True)
-    (base_dir / "RESULT").mkdir(parents=True, exist_ok=True)
-    # New directories for PAK TOOL (Options 3 & 4)
-    pak_tool_dir = base_dir / "PAK TOOL"
-    (pak_tool_dir / "EDIT").mkdir(parents=True, exist_ok=True)
-    (pak_tool_dir / "UNPACK").mkdir(parents=True, exist_ok=True)
-    (pak_tool_dir / "RESULT").mkdir(parents=True, exist_ok=True)
-    (pak_tool_dir / "PAK").mkdir(parents=True, exist_ok=True)
+SDCARD_DOWNLOAD_DIR = Path("/sdcard/Download")
+SDCARD_EDIT_DIR = SDCARD_DOWNLOAD_DIR / "EDIT"
+SDCARD_UNPACKED_DIR = SDCARD_DOWNLOAD_DIR / "UNPACKED"
+
+
+def ensure_sdcard_directories() -> bool:
+    """Create the only folders used by the interactive SD-card workflow."""
+    try:
+        SDCARD_EDIT_DIR.mkdir(parents=True, exist_ok=True)
+        SDCARD_UNPACKED_DIR.mkdir(parents=True, exist_ok=True)
+        return True
+    except OSError as exc:
+        console.print(
+            f"[bold {NEON['red']}]Cannot access {SDCARD_DOWNLOAD_DIR}: {escape(str(exc))}[/bold {NEON['red']}]"
+        )
+        console.print(
+            f"[bold {NEON['cyan']}]Run Termux storage setup first, then retry.[/bold {NEON['cyan']}]"
+        )
+        return False
+
+
+def get_pak_files_from_sdcard() -> list[Path]:
+    """Return top-level .pak files from /sdcard/Download in stable order."""
+    if not SDCARD_DOWNLOAD_DIR.is_dir():
+        return []
+    return sorted(
+        (item for item in SDCARD_DOWNLOAD_DIR.iterdir() if item.is_file() and item.suffix.lower() == ".pak"),
+        key=lambda item: item.name.casefold(),
+    )
+
+
+def select_pak_from_sdcard(prompt: str) -> Path | None:
+    """Show a numbered PAK list and return the selected file."""
+    pak_files = get_pak_files_from_sdcard()
+    if not pak_files:
+        console.print(
+            f"[bold {NEON['yellow']}]No .pak files found in /sdcard/Download/. Please copy your PAK file there.[/bold {NEON['yellow']}]"
+        )
+        return None
+
+    console.print(f"[bold {NEON['cyan']}]PAK files in /sdcard/Download/[/bold {NEON['cyan']}]")
+    for index, pak_file in enumerate(pak_files, 1):
+        size = human_size(pak_file.stat().st_size)
+        console.print(f"[bold {NEON['green']}]{index}[/bold {NEON['green']}.] {pak_file.name} [dim]({size})[/dim]")
+
+    while True:
+        choice = safe_input(f"[bold {NEON['cyan']}]{prompt} (1-{len(pak_files)}):[/bold {NEON['cyan']}] ").strip()
+        try:
+            selected = int(choice)
+        except ValueError:
+            console.print(f"[bold {NEON['red']}]Please enter a valid number.[/bold {NEON['red']}]")
+            continue
+        if 1 <= selected <= len(pak_files):
+            return pak_files[selected - 1]
+        console.print(f"[bold {NEON['red']}]Please choose a number from 1 to {len(pak_files)}.[/bold {NEON['red']}]")
 
 def print_banner():
     os.system('cls' if os.name == 'nt' else 'clear')
@@ -2180,258 +2224,89 @@ def display_file_selector(title, folder_path, file_pattern="*.pak"):
         console.print("[bold red][ERROR] Please enter a valid number[/]")
         return None, None
 
-def guided_pak_workflow(data_path):
-    """Run the recommended two-step workflow without exposing mode choices."""
-    pak_dir = data_path / "PAK"
-    if not pak_dir.exists():
-        console.print(f"[bold red]ERROR: PAK folder not found at {pak_dir}[/]")
-        console.print("[dim]Place a .pak file in the PAK folder and run PakForge again.[/dim]")
+def _directory_has_files(directory: Path) -> bool:
+    return directory.is_dir() and any(path.is_file() for path in directory.rglob("*"))
+
+
+def unpack_selected_sdcard_pak() -> None:
+    pak_file = select_pak_from_sdcard("Select PAK to unpack")
+    if pak_file is None:
         return
 
-    pak_file, _ = display_file_selector("Available .pak files:", pak_dir)
-    if not pak_file:
-        return
-
-    unpack_path = data_path / "UNPACK" / pak_file.stem
-    repack_path = data_path / "REPACK" / pak_file.stem
-    result_dir = data_path / "RESULT"
-    result_dir.mkdir(parents=True, exist_ok=True)
-
-    unpacked_files = [p for p in unpack_path.rglob("*") if p.is_file()] if unpack_path.exists() else []
-    edited_files = [p for p in repack_path.rglob("*") if p.is_file()] if repack_path.exists() else []
-
-    if not unpacked_files:
-        try:
-            console.print(f"[bold #00FFFF]Step 1/2 — Inspecting and unpacking {pak_file.name}...[/bold #00FFFF]")
-            pak = TencentPakFile(pak_file)
-            pak.dump(unpack_path)
-            log_path = unpack_path / f"Debug_{pak_file.stem}.log"
-            dump_unpacking_log(pak, log_path)
-            console.print(f"[bold #00FF88]SUCCESS: Extracted to {unpack_path}[/bold #00FF88]")
-            console.print("[bold #00E5FF]Edit the extracted files, then run PakForge again to repack automatically.[/bold #00E5FF]")
-        except Exception as e:
-            console.print(f"[bold #FF0055]ERROR: {escape(str(e))}[/bold #FF0055]")
-        return
-
-    edit_dir = repack_path if edited_files else unpack_path
+    output_dir = SDCARD_UNPACKED_DIR / pak_file.stem
     try:
-        console.print(f"[bold #00FFFF]Step 2/2 — Repacking edited files from {edit_dir}...[/bold #00FFFF]")
+        console.print(f"[bold {NEON['cyan']}]Unpacking: {pak_file.name}[/bold {NEON['cyan']}]")
         pak = TencentPakFile(pak_file)
-        output_pak = result_dir / pak_file.name
-        count = repack_pak_file_full(pak, edit_dir, output_pak)
-        if count > 0:
-            console.print(f"[bold #00FF88]SUCCESS: Repacked {count} files.[/bold #00FF88]")
-            console.print(f"[bold #00FF88]Output: {output_pak}[/bold #00FF88]")
-        else:
-            console.print("[bold #FFAA00]No edited files detected; the extracted workspace is ready for editing.[/bold #FFAA00]")
-    except Exception as e:
-        console.print(f"[bold #FF0055]ERROR: Repack failed: {escape(str(e))}[/bold #FF0055]")
+        pak.dump(output_dir, workers=4)
+        dump_unpacking_log(pak, output_dir / f"Debug_{pak_file.stem}.log")
+        console.print(f"[bold {NEON['green']}]Unpacked files: {output_dir}[/bold {NEON['green']}]")
+    except Exception as exc:
+        console.print(f"[bold {NEON['red']}]Unpack failed: {escape(str(exc))}[/bold {NEON['red']}]")
+
+
+def repack_selected_sdcard_pak() -> None:
+    SDCARD_EDIT_DIR.mkdir(parents=True, exist_ok=True)
+    if not _directory_has_files(SDCARD_EDIT_DIR):
+        console.print(
+            f"[bold {NEON['yellow']}]EDIT folder is empty. Place your modified .lua or .luac files in /sdcard/Download/EDIT/ first.[/bold {NEON['yellow']}]"
+        )
+        return
+
+    pak_file = select_pak_from_sdcard("Select source PAK to repack")
+    if pak_file is None:
+        return
+
+    target_path = safe_input(
+        f"[bold {NEON['cyan']}]Target path inside the PAK (example: Content/Lua/Mods):[/bold {NEON['cyan']}] "
+    ).strip().replace('\\', '/').strip('/')
+    if not target_path:
+        console.print(f"[bold {NEON['red']}]A target path is required.[/bold {NEON['red']}]")
+        return
+
+    output_pak = SDCARD_DOWNLOAD_DIR / f"MODDED_{pak_file.name}"
+    try:
+        console.print(f"[bold {NEON['cyan']}]Repacking with Lua injection: {pak_file.name}[/bold {NEON['cyan']}]")
+        pak = TencentPakFile(pak_file)
+        count = repack_pak_file_full(
+            pak,
+            SDCARD_EDIT_DIR,
+            output_pak,
+            target_path=target_path,
+            force_add=True,
+            workers=4,
+        )
+        if count <= 0:
+            console.print(f"[bold {NEON['red']}]No files were repacked.[/bold {NEON['red']}]")
+            return
+        console.print(f"[bold {NEON['green']}]Repacked {count} file(s).[/bold {NEON['green']}]")
+        console.print(f"[bold {NEON['green']}]Output: {output_pak}[/bold {NEON['green']}]")
+    except Exception as exc:
+        console.print(f"[bold {NEON['red']}]Repack failed: {escape(str(exc))}[/bold {NEON['red']}]")
 
 
 def main_menu():
-    if getattr(sys, 'frozen', False):
-        data_path = Path(sys.executable).parent
-    else:
-        data_path = Path(__file__).parent
-    ensure_directories(data_path)
-    while True:
-        print_banner()
-        menu = Table(show_header=False, box=ROUNDED, border_style=NEON['purple'],
-                     padding=(0, 2), expand=False)
-        menu.add_column('Key', style=f'bold {NEON["cyan"]}', width=5, justify='center')
-        menu.add_column('Workflow', style='bold white')
-        menu.add_row('01', 'GUIDED PAK WORKFLOW  •  AUTO UNPACK / REPACK')
-        menu.add_row('00', 'EXIT')
-        console.print(Panel(menu, title=f'[bold {NEON["pink"]}]MAIN MENU[/bold {NEON["pink"]}]',
-                            border_style=NEON['blue'], box=ROUNDED, expand=False))
-        console.print(f"[bold {NEON['muted']}]One recommended workflow: select a PAK, edit it, then run PakForge again.[/bold {NEON['muted']}]")
-        choice = safe_input(f'[bold {NEON["cyan"]}]ENTER YOUR CHOICE:[/bold {NEON["cyan"]}] ').strip()
-        
-        if choice == '1':
-            guided_pak_workflow(data_path)
-            safe_input('\nPress Enter to continue...')
-            continue
+    """Simple SD-card-only menu for beginner-friendly PAK workflows."""
+    if not ensure_sdcard_directories():
+        return
 
-        elif False:
-            pak_dir = data_path / "PAK"
-            if not pak_dir.exists():
-                console.print(f"[bold red]ERROR: PAK folder not found at {pak_dir}[/]")
-                safe_input('\nPress Enter to continue...')
-                continue
-            pak_file, _ = display_file_selector("📁 Available .pak files to UNPACK:", pak_dir)
-            if not pak_file:
-                safe_input('\nPress Enter to continue...')
-                continue
-            try:
-                console.print(f'[bold #00FFFF]🚀 Unpacking {pak_file.name}...[/bold #00FFFF]')
-                pak = TencentPakFile(pak_file)
-                unpack_path = data_path / "UNPACK" / pak_file.stem
-                repack_path = data_path / "REPACK" / pak_file.stem
-                pak.dump(unpack_path)
-                log_path = unpack_path / f'Debug_{pak_file.stem}.log'
-                dump_unpacking_log(pak, log_path)
-                for dir_path, _ in pak._index.items():
-                    current_repack_path = repack_path / pak._mount_point / dir_path
-                    current_repack_path.mkdir(parents=True, exist_ok=True)
-                console.print(f'[bold #00FF88]✅ SUCCESS: Extracted to {unpack_path}[/bold #00FF88]')
-            except Exception as e:
-                console.print(f'[bold #FF0055]❌ Error: {escape(str(e))}[/bold #FF0055]')
-            safe_input('\nPress Enter to continue...')
-            
-        elif choice == '2':
-            pak_dir = data_path / "PAK"
-            if not pak_dir.exists():
-                console.print(f"[bold red]ERROR: PAK folder not found at {pak_dir}[/]")
-                safe_input('\nPress Enter to continue...')
-                continue
-            pak_file, _ = display_file_selector("📁 Available .pak files to REPACK:", pak_dir)
-            if not pak_file:
-                safe_input('\nPress Enter to continue...')
-                continue
-            repack_dir = data_path / "REPACK" / pak_file.stem
-            if not repack_dir.exists():
-                console.print(f'[bold #FF0055]❌ ERROR: {repack_dir} not found.[/bold #FF0055]')
-                console.print('[#FFAA00]⚠ Please unpack first using option 1.[/#FFAA00]')
-                safe_input('\nPress Enter to continue...')
-                continue
-            try:
-                console.print(f'[bold #00FFFF]🚀 Repacking {pak_file.name}...[/bold #00FFFF]')
-                pak = TencentPakFile(pak_file)
-                result_dir = data_path / "RESULT"
-                output_pak = result_dir / pak_file.name
-                mode = detect_repack_mode(pak_file)
-                if mode == 'MINI_OBB':
-                    repack_mini_obb(pak, repack_dir, output_pak)
-                elif mode == 'GAMEPATCH':
-                    repack_gamepatch(pak, repack_dir, output_pak)
-                else:
-                    repack_obbzsdic(pak, repack_dir, output_pak)
-                console.print('[bold #00FF88]✅ REPACK COMPLETED SUCCESSFULLY![/bold #00FF88]')
-            except Exception as e:
-                console.print(f'[bold #FF0055]❌ Repack failed:[/bold #FF0055] {e}')
-                import traceback
-                traceback.print_exc()
-            safe_input('\nPress Enter to continue...')
-            
-        elif choice == '3':
-            # REPACK ANY SIZE - Uses PAK TOOL/EDIT folder - FULL REBUILD
-            pak_tool_dir = data_path / "PAK TOOL"
-            pak_dir = pak_tool_dir / "PAK"
-            edit_dir = pak_tool_dir / "EDIT"
-            result_dir = pak_tool_dir / "RESULT"
-            
-            if not pak_dir.exists():
-                console.print(f"[bold red]ERROR: PAK folder not found at {pak_dir}[/]")
-                safe_input('\nPress Enter to continue...')
-                continue
-            
-            pak_file, _ = display_file_selector("📁 Available .pak files to REPACK (EXISTING FILES):", pak_dir)
-            if not pak_file:
-                safe_input('\nPress Enter to continue...')
-                continue
-            
-            if not edit_dir.exists() or not any(edit_dir.iterdir()):
-                console.print(f'[bold #FF0055]❌ ERROR: No files in EDIT folder.[/bold #FF0055]')
-                console.print('[#FFAA00]⚠ Please place edited files in PAK TOOL/EDIT folder.[/#FFAA00]')
-                safe_input('\nPress Enter to continue...')
-                continue
-            
-            try:
-                console.print(f'[bold #00FFFF]🚀 Repacking {pak_file.name} (ANY SIZE - Full Rebuild)...[/bold #00FFFF]')
-                pak = TencentPakFile(pak_file)
-                output_pak = result_dir / pak_file.name
-                
-                count = repack_pak_file_full(pak, edit_dir, output_pak)
-                
-                if count > 0:
-                    console.print(f'[bold #00FF88]✅ Repacked {count} files successfully![/bold #00FF88]')
-                    console.print(f'[bold #00FF88]📦 Output: {output_pak}[/bold #00FF88]')
-                else:
-                    console.print('[bold #FF0055]❌ No files repacked![/bold #FF0055]')
-                    
-            except Exception as e:
-                console.print(f'[bold #FF0055]❌ Repack failed:[/bold #FF0055] {e}')
-                import traceback
-                traceback.print_exc()
-            safe_input('\nPress Enter to continue...')
-            
-        elif choice == '4':
-            # DIRECT REPACK - FORCE ADD files to target path
-            pak_tool_dir = data_path / "PAK TOOL"
-            pak_dir = pak_tool_dir / "PAK"
-            edit_dir = pak_tool_dir / "EDIT"
-            result_dir = pak_tool_dir / "RESULT"
-            
-            if not pak_dir.exists():
-                console.print(f"[bold red]ERROR: PAK folder not found at {pak_dir}[/]")
-                safe_input('\nPress Enter to continue...')
-                continue
-            
-            pak_file, _ = display_file_selector("📁 Available .pak files to REPACK TO PATH:", pak_dir)
-            if not pak_file:
-                safe_input('\nPress Enter to continue...')
-                continue
-            
-            if not edit_dir.exists() or not any(edit_dir.iterdir()):
-                console.print(f'[bold #FF0055]❌ ERROR: No files in EDIT folder.[/bold #FF0055]')
-                console.print('[#FFAA00]⚠ Please place files to add in PAK TOOL/EDIT folder.[/#FFAA00]')
-                safe_input('\nPress Enter to continue...')
-                continue
-            
-            console.print()
-            console.print('[bold #FFFF00]📁 Enter the target path inside the PAK where files should be added:[/bold #FFFF00]')
-            console.print('[dim]Example: Content/Lua/GameLua/Mod/BRMod/Gameplay/Core[/dim]')
-            console.print('[bold green]✓ Uses EXACT SAME logic as Option 3[/bold green]')
-            console.print('[bold green]✓ 100% game compatible - no login stuck[/bold green]')
-            target_path = safe_input('[bold #00FFFF]Path: [/bold #00FFFF]').strip()
-            
-            if not target_path:
-                console.print('[bold #FF0055]❌ No path provided![/bold #FF0055]')
-                safe_input('\nPress Enter to continue...')
-                continue
-            
-            # Normalize target path
-            target_path = target_path.replace('\\', '/').strip('/')
-            if not target_path:
-                console.print('[bold #FF0055]❌ Invalid target path![/bold #FF0055]')
-                safe_input('\nPress Enter to continue...')
-                continue
-            
-            try:
-                console.print(f'[bold #00FFFF]🚀 Adding files to {target_path} in {pak_file.name}...[/bold #00FFFF]')
-                console.print('[bold cyan]📋 Using EXACT Option 3 logic[/bold cyan]')
-                pak = TencentPakFile(pak_file)
-                output_pak = result_dir / pak_file.name
-                
-                count = repack_pak_file_full(pak, edit_dir, output_pak, target_path, force_add=True)
-                
-                if count > 0:
-                    console.print()
-                    console.print(f'[bold #00FF88]✅ Successfully processed {count} files to {target_path}![/bold #00FF88]')
-                    console.print(f'[bold #00FF88]📦 Output: {output_pak}[/bold #00FF88]')
-                    console.print()
-                    console.print('[bold green]🎮 PAK is now GAME READY![/bold green]')
-                    console.print('[bold green]✅ No login issues - same as Option 3[/bold green]')
-                else:
-                    console.print('[bold #FF0055]❌ No files were processed![/bold #FF0055]')
-                    
-            except Exception as e:
-                console.print(f'[bold #FF0055]❌ Repack failed:[/bold #FF0055] {e}')
-                import traceback
-                traceback.print_exc()
-            safe_input('\nPress Enter to continue...')
-            
-        elif choice == '5':
-            delete_folder(data_path)
-            safe_input('\nPress Enter to continue...')
-            
-        elif choice == '0':
-            console.print("[bold magenta]Goodbye![/bold magenta]")
-            time.sleep(2)
-            break
+    while True:
+        console.print()
+        console.print(f"[bold {NEON['cyan']}]1.[/bold {NEON['cyan']}] UNPACK PAK")
+        console.print(f"[bold {NEON['cyan']}]2.[/bold {NEON['cyan']}] REPACK PAK (with Lua injection)")
+        console.print(f"[bold {NEON['cyan']}]3.[/bold {NEON['cyan']}] EXIT")
+        choice = safe_input(f"[bold {NEON['cyan']}]Select an option (1-3):[/bold {NEON['cyan']}] ").strip()
+
+        if choice == "1":
+            unpack_selected_sdcard_pak()
+        elif choice == "2":
+            repack_selected_sdcard_pak()
+        elif choice == "3":
+            console.print(f"[bold {NEON['green']}]Goodbye.[/bold {NEON['green']}]")
+            return
         else:
-            console.print('[bold #FF0055]❌ Invalid choice![/bold #FF0055]')
-            time.sleep(2)
+            console.print(f"[bold {NEON['red']}]Please select 1, 2, or 3.[/bold {NEON['red']}]")
+
+        safe_input(f"[bold {NEON['cyan']}]Press Enter to return to the menu...[/bold {NEON['cyan']}]")
 
 if __name__ == '__main__':
     try:
