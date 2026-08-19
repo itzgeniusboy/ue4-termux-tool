@@ -189,7 +189,7 @@ pakforge detect /sdcard/Download/game.pak --json
 
 ### One-command Lua pipeline
 
-The Lua pipeline performs detection, Lua file discovery, target-prefix mapping, repack, and post-repack verification. Use `--dry-run` to generate a plan without writing an output PAK:
+The Lua pipeline performs detection, Lua file discovery, target-prefix mapping, repack, and post-repack verification. Use `--compile-lua` when the edited directory contains Lua source and the target offline project expects Lua 5.1 bytecode; PakForge checks `luac5.1` and then `luac51` before any generic fallback. PakForge does not auto-download executable compilers. Use `--dry-run` to generate a plan without writing an output PAK:
 
 ```bash
 pakforge lua-pipeline \
@@ -198,6 +198,7 @@ pakforge lua-pipeline \
   --target-prefix Content/Lua/Mods \
   --output /sdcard/Download/game-lua.pak \
   --overwrite \
+  --compile-lua \
   --verify
 ```
 
@@ -212,7 +213,7 @@ pakforge lua-pipeline \
   --dry-run
 ```
 
-The pipeline automatically reports when the PAK is invalid or unsupported and writes a JSON report after a verified repack. Use `--is-od` when the project is known to require OD parsing. Add `--backup` when replacing an existing output so PakForge can restore it if repacking or verification fails.
+The pipeline automatically reports when the PAK is invalid or unsupported and writes a JSON report after a verified repack. Use `--is-od` when the project is known to require OD parsing. Add `--backup` when replacing an existing output so PakForge can restore it if repacking or verification fails. For a normal edited directory, `pakforge repack ... --verify` reopens the output and validates its index, offsets, mount point, and entry metadata.
 
 ## Developer build workflow
 

@@ -182,11 +182,71 @@ EM_SM4_NEW_BASE = 31
 EM_SM4_NEW_MASK = ~EM_SM4_NEW_BASE
 EM_UNKNOWN_17 = 17
 
+# Tencent/UE entry metadata uses these methods.  Rejecting an unknown method
+# during a rebuild is safer than silently writing plaintext with an encrypted
+# flag, which produces an unreadable entry in an offline test project.
+SUPPORTED_ENCRYPTION_METHODS = {
+    EM_SIMPLE1,
+    EM_SIMPLE2,
+    EM_SM4_2,
+    EM_SM4_4,
+    EM_UNKNOWN_17,
+}
+
 CM_NONE = 0
 CM_ZLIB = 1
 CM_ZSTD = 6
 CM_ZSTD_DICT = 8
 CM_MASK = 15
+SUPPORTED_COMPRESSION_METHODS = {CM_NONE, CM_ZLIB, CM_ZSTD, CM_ZSTD_DICT}
+
+
+def normalize_pak_path(path: str | PurePath) -> str:
+    """Return a canonical, relative PAK path without changing its case.
+
+    PAK directory indexes use forward slashes even on Windows.  Keeping the
+    relative path separate from the mount point is important: the mount point
+    is serialized exactly as stored in the source index, while entry hashes are
+    calculated from the normalized asset path only.
+    """
+    value = str(path).replace('\\', '/')
+    while value.startswith('./'):
+        value = value[2:]
+    return value.lstrip('/')
+
+
+def calculate_tencent_hashes(raw_data: bytes, full_path: str | PurePath, version: int) -> dict[str, object]:
+    """Calculate the deterministic hashes used by Tencent-style entries.
+
+    ``content_hash`` is per-entry and covers the uncompressed bytes.  The
+    20-byte ``unk2`` field in this parser is the per-entry path hash.  Some
+    Tencent variants also expose a footer ``content_org_hash``; it is returned
+    here for callers that have a format-specific rule for that whole-PAK
+    field, but it must not be confused with the per-entry field.
+    """
+    normalized = normalize_pak_path(full_path)
+    lower_path = normalized.lower()
+    stem = PurePath(normalized).stem.lower()
+    return {
+        'content_hash': SHA1.new(raw_data).digest(),
+        'content_org_hash': SHA1.new(raw_data).digest() if version >= 12 else None,
+        'stem_hash': zlib.crc32(stem.encode('utf-32le')) & 0xFFFFFFFF,
+        'unk2': SHA1.new(lower_path.encode('utf-8')).digest(),
+    }
+
+
+def validate_encryption_metadata(encrypted: bool, encryption_method: int, version: int) -> None:
+    """Validate the entry encryption flag/method pair before serialization."""
+    if not encrypted:
+        return
+    # Versions before 12 do not serialize an encryption-method field.  Keep
+    # their legacy flag readable, but validate explicit v12+ methods strictly.
+    if version >= 12 and encryption_method not in SUPPORTED_ENCRYPTION_METHODS:
+        raise ValueError(
+            f'Unsupported encrypted-entry method {encryption_method}; '
+            f'expected one of {sorted(SUPPORTED_ENCRYPTION_METHODS)}'
+        )
+
 
 class SM4:
     _S_BOX = bytes([
@@ -642,7 +702,12 @@ class TencentPakFile:
     
     def _verify_stem_hash(self) -> None:
         if not self._is_od and self._pak_info.version >= 9:
-                assert self._pak_info.stem_hash == zlib.crc32(self._file_path.stem.encode('utf-32le'))
+            expected = zlib.crc32(self._file_path.stem.lower().encode('utf-32le')) & 0xFFFFFFFF
+            if self._pak_info.stem_hash != expected:
+                raise ValueError(
+                    f'PAK stem hash mismatch: stored={self._pak_info.stem_hash:#x}, '
+                    f'expected={expected:#x}'
+                )
     def _tencent_load_index(self) -> None:
         index_data = self._file_content[self._pak_info.index_offset:][:self._pak_info.index_size]
         if self._pak_info.index_encrypted:
@@ -658,11 +723,37 @@ class TencentPakFile:
         assert expected_hash == SHA1.new(index_data).digest()
     @staticmethod
     def _construct_mount_point(mount_point: str) -> PurePath:
-        result = PurePath()
-        for part in PurePath(mount_point).parts:
-            if part!= '..':
-                result /= part
-        return result
+        """Preserve the source mount point while preventing path traversal.
+
+        The previous implementation dropped every ``..`` component and then
+        rebuilt a ``PurePath``.  That silently changed valid UE mount strings
+        such as ``../../../Content/``.  We retain the exact relative suffix in
+        a normalized forward-slash form.  Absolute roots are rejected; output
+        extraction separately removes parent components to stay inside its
+        destination directory.
+        """
+        raw = str(mount_point).replace('\\', '/')
+        if raw.startswith('/') or (len(raw) > 1 and raw[1] == ':'):
+            raise ValueError(f'Absolute PAK mount point is not supported: {mount_point!r}')
+        parts = []
+        for part in raw.split('/'):
+            if not part or part == '.':
+                continue
+            if part == '..':
+                parts.append(part)
+            else:
+                parts.append(part)
+        if not parts:
+            return PurePath()
+        return PurePath('/'.join(parts))
+
+    @staticmethod
+    def _safe_mount_point_for_output(mount_point: PurePath) -> PurePath:
+        """Map a preserved mount point to a filesystem-safe output suffix."""
+        safe = [part for part in str(mount_point).replace('\\', '/').split('/')
+                if part not in ('', '.', '..')]
+        return PurePath('/'.join(safe)) if safe else PurePath()
+
     def _peek_content(self, offset: int, size: int, encryption_method: int) -> memoryview:
         size = PakCrypto.align_encrypted_content_size(size, encryption_method)
         return self._file_content[offset:][:size]
@@ -719,7 +810,9 @@ class TencentPakFile:
                     file.write(data)
     
     def dump(self, out_path: Path) -> None:
-        out_path = out_path / self._mount_point
+        # Preserve the mount string in the PAK/index, but never allow its
+        # leading ``..`` components to escape the chosen extraction directory.
+        out_path = out_path / self._safe_mount_point_for_output(self._mount_point)
         out_path.mkdir(parents=True, exist_ok=True)
         total_files = sum(len(d) for d in self._index.values())
         with Progress(
@@ -810,9 +903,29 @@ def _encrypt_plaintext(plaintext: bytes, pak_relative_path: PurePath, encryption
                     out.extend(sm4.encrypt(block))
                 return bytes(out)
             else:
-                return plaintext
+                if encryption_method == 0:
+                    return plaintext
+                raise ValueError(f'Unsupported encryption method: {encryption_method}')
 
 # ==================== WORKING REPACK FUNCTIONS ====================
+
+
+def _encode_entry_payload(plain_data: bytes, pak_relative_path: PurePath, encrypted: bool, encryption_method: int) -> tuple[bytes, int]:
+    """Encode one stored payload and return ``(physical_bytes, logical_size)``.
+
+    PAK block end offsets describe the logical compressed length.  SIMPLE2 and
+    SM4 require aligned ciphertext on disk, so the physical write can be
+    larger than that logical length.  Keeping both values prevents the next
+    block offset and the entry ``size`` field from drifting when an edited file
+    changes size.
+    """
+    if not encrypted:
+        return plain_data, len(plain_data)
+    validate_encryption_metadata(True, encryption_method, 12)
+    physical_size = PakCrypto.align_encrypted_content_size(len(plain_data), encryption_method)
+    padded = plain_data.ljust(physical_size, b'\\x00')
+    return _encrypt_plaintext(padded, pak_relative_path, encryption_method), len(plain_data)
+
 
 def _repack_uncompressed(outfh, pak_file, entry, pak_relative_path: PurePath, new_data: bytes):
     enc_method = entry.encryption_method
@@ -856,6 +969,11 @@ def _pw_string(s):
 
 def _pw_entry(e, v):
     """Serialise one TencentPakEntry back to bytes."""
+    if e.compression_method not in SUPPORTED_COMPRESSION_METHODS:
+        raise ValueError(f'Unsupported compression method: {e.compression_method}')
+    validate_encryption_metadata(e.encrypted, e.encryption_method, v)
+    if e.compression_method != CM_NONE and e.compression_block_size <= 0:
+        raise ValueError('Compressed entries must have a positive block size')
     w = bytearray(e.content_hash)
     w += struct.pack('<Q', e.offset)
     w += struct.pack('<Q', e.uncompressed_size)
@@ -1044,45 +1162,51 @@ def repack_pak_file_full(pak_file, edited_root, output_path, target_path=None, f
                 new_raw = p.read_bytes()
                 pak_rel = PurePath(full_path)
 
-                ne.content_hash = SHA1.new(new_raw).digest()
-                ne.uncompressed_size = len(new_raw)
                 ne.compression_method = template.compression_method if template else cm
                 ne.encryption_method = template.encryption_method if template else em
                 ne.encrypted = template.encrypted if template else old_entry.encrypted
                 ne.unk1 = template.unk1 if template else old_entry.unk1
-                
-                # FIX 2: If we changed the path of an existing file via target_path, recalculate unk2
-                if template and target_path:
-                    full_path_str = mp_str + full_path
-                    ne.unk2 = SHA1.new(full_path_str.lower().encode('utf-8')).digest()
-                else:
-                    ne.unk2 = template.unk2 if template else old_entry.unk2
-                    
                 ne.index_new_sep = template.index_new_sep if template else old_entry.index_new_sep
+                validate_encryption_metadata(ne.encrypted, ne.encryption_method, version)
+                if ne.compression_method not in SUPPORTED_COMPRESSION_METHODS:
+                    raise ValueError(f'Unsupported compression method: {ne.compression_method}')
+
+                # Hashes cover the uncompressed bytes and the canonical relative
+                # asset path.  Do not include the mount point in the entry path
+                # hash: the mount point is a separate index field.
+                hashes = calculate_tencent_hashes(new_raw, full_path, version)
+                ne.content_hash = hashes['content_hash']
+                ne.unk2 = hashes['unk2'] if version >= 5 else bytes()
+                ne.uncompressed_size = len(new_raw)
 
                 if ne.compression_method == CM_NONE:
-                    cipher = (_encrypt_plaintext(new_raw, pak_rel, ne.encryption_method)
-                              if ne.encrypted else new_raw)
+                    cipher, _ = _encode_entry_payload(new_raw, pak_rel, ne.encrypted, ne.encryption_method)
                     ne.offset = len(out_buf)
                     ne.size = len(new_raw)
-                    ne.uncompressed_size = len(new_raw)
+                    ne.compressed_blocks = []
+                    ne.compression_block_size = 0
                     out_buf += cipher
                 else:
-                    cs = (template.compression_block_size if template and template.compression_block_size > 0 
-                          else old_entry.compression_block_size if old_entry.compression_block_size > 0 
+                    cs = (template.compression_block_size if template and template.compression_block_size > 0
+                          else old_entry.compression_block_size if old_entry.compression_block_size > 0
                           else 65536)
-                    chunks = [new_raw[i:i+cs] for i in range(0, len(new_raw), cs)]
+                    cs = max(1, int(cs))
+                    chunks = [new_raw[i:i + cs] for i in range(0, len(new_raw), cs)] or [b'']
                     new_blks = []
                     for chunk in chunks:
                         compressed = _best_compress(chunk, ne.compression_method, pak_file._zstd_dict)
-                        cipher = (_encrypt_plaintext(compressed, pak_rel, ne.encryption_method)
-                                  if ne.encrypted else compressed)
+                        cipher, logical_size = _encode_entry_payload(
+                            compressed, pak_rel, ne.encrypted, ne.encryption_method
+                        )
                         blk = PakCompressedBlock.__new__(PakCompressedBlock)
                         blk.start = len(out_buf)
-                        blk.end = blk.start + len(cipher)
+                        blk.end = blk.start + logical_size
                         out_buf += cipher
                         new_blks.append(blk)
 
+                    # This field is the uncompressed chunk size used to rebuild
+                    # the block table; it must follow the new edited payload.
+                    ne.compression_block_size = cs
                     ne.compressed_blocks = new_blks
                     ne.offset = new_blks[0].start if new_blks else len(out_buf)
                     ne.size = sum(b.end - b.start for b in new_blks)
@@ -1127,41 +1251,44 @@ def repack_pak_file_full(pak_file, edited_root, output_path, target_path=None, f
                 new_raw = p.read_bytes()
                 pak_rel = PurePath(fp)
                 
-                ne.content_hash = SHA1.new(new_raw).digest()
-                ne.uncompressed_size = len(new_raw)
                 ne.compression_method = template.compression_method
                 ne.encryption_method = template.encryption_method
                 ne.encrypted = template.encrypted
                 ne.unk1 = template.unk1
-                
-                # FIX 3: Accurately generate the path hash (unk2) for the NEW file
-                # The game engine uses this specific SHA1 hash to find the file!
-                full_path_str = mp_str + fp
-                ne.unk2 = SHA1.new(full_path_str.lower().encode('utf-8')).digest()
-                
                 ne.index_new_sep = template.index_new_sep
+                validate_encryption_metadata(ne.encrypted, ne.encryption_method, version)
+                if ne.compression_method not in SUPPORTED_COMPRESSION_METHODS:
+                    raise ValueError(f'Unsupported compression method: {ne.compression_method}')
+
+                hashes = calculate_tencent_hashes(new_raw, fp, version)
+                ne.content_hash = hashes['content_hash']
+                ne.unk2 = hashes['unk2'] if version >= 5 else bytes()
+                ne.uncompressed_size = len(new_raw)
 
                 if ne.compression_method == CM_NONE:
-                    cipher = (_encrypt_plaintext(new_raw, pak_rel, ne.encryption_method)
-                              if ne.encrypted else new_raw)
+                    cipher, _ = _encode_entry_payload(new_raw, pak_rel, ne.encrypted, ne.encryption_method)
                     ne.offset = len(out_buf)
                     ne.size = len(new_raw)
-                    ne.uncompressed_size = len(new_raw)
+                    ne.compressed_blocks = []
+                    ne.compression_block_size = 0
                     out_buf += cipher
                 else:
                     cs = template.compression_block_size if template.compression_block_size > 0 else 65536
-                    chunks = [new_raw[i:i+cs] for i in range(0, len(new_raw), cs)]
+                    cs = max(1, int(cs))
+                    chunks = [new_raw[i:i + cs] for i in range(0, len(new_raw), cs)] or [b'']
                     new_blks = []
                     for chunk in chunks:
                         compressed = _best_compress(chunk, ne.compression_method, pak_file._zstd_dict)
-                        cipher = (_encrypt_plaintext(compressed, pak_rel, ne.encryption_method)
-                                  if ne.encrypted else compressed)
+                        cipher, logical_size = _encode_entry_payload(
+                            compressed, pak_rel, ne.encrypted, ne.encryption_method
+                        )
                         blk = PakCompressedBlock.__new__(PakCompressedBlock)
                         blk.start = len(out_buf)
-                        blk.end = blk.start + len(cipher)
+                        blk.end = blk.start + logical_size
                         out_buf += cipher
                         new_blks.append(blk)
 
+                    ne.compression_block_size = cs
                     ne.compressed_blocks = new_blks
                     ne.offset = new_blks[0].start if new_blks else len(out_buf)
                     ne.size = sum(b.end - b.start for b in new_blks)
@@ -1221,10 +1348,42 @@ def repack_pak_file_full(pak_file, edited_root, output_path, target_path=None, f
     footer_sz = TencentPakInfo._mem_size(version)
     new_footer = bytearray(orig_fc[-footer_sz:])
 
+    # Tencent extensions precede the fixed 45-byte PakInfo footer.  The fixed
+    # fields therefore use offsets relative to ``base_offset``; this is the
+    # same ordering used by the parser and avoids corrupting v12 extensions.
     h_key = struct.pack('<5I', *keystream[4:9])
-    new_footer[-36:-16] = bytes(a ^ b for a, b in zip(new_sha1, h_key))
-    new_footer[-16:-8] = ((new_idx_size ^ (keystream[10] << 32 | keystream[11])).to_bytes(8, 'little'))
-    new_footer[-8:] = ((new_idx_offset ^ (keystream[0] << 32 | keystream[1])).to_bytes(8, 'little'))
+    base_offset = footer_sz - PakInfo._mem_size(version)
+    index_hash_offset = base_offset + 1 + 4 + 4
+    index_size_offset = index_hash_offset + 20
+    index_offset_offset = index_size_offset + 8
+    new_footer[index_hash_offset:index_hash_offset + 20] = bytes(
+        a ^ b for a, b in zip(new_sha1, h_key)
+    )
+    new_footer[index_size_offset:index_size_offset + 8] = (
+        (new_idx_size ^ (keystream[10] << 32 | keystream[11])).to_bytes(8, 'little')
+    )
+    new_footer[index_offset_offset:index_offset_offset + 8] = (
+        (new_idx_offset ^ (keystream[0] << 32 | keystream[1])).to_bytes(8, 'little')
+    )
+
+    if not pak_file._is_od and version >= 9:
+        stem_offset = 0
+        if version >= 7:
+            stem_offset += 32
+        if version >= 8:
+            stem_offset += 768
+        output_stem_hash = zlib.crc32(
+            Path(output_path).stem.lower().encode('utf-32le')
+        ) & 0xFFFFFFFF
+        new_footer[stem_offset:stem_offset + 4] = (
+            (output_stem_hash ^ keystream[8]).to_bytes(4, 'little')
+        )
+
+    # In this Tencent layout ``content_org_hash`` is a single footer-wide
+    # vendor field, not a per-entry field.  The parser cannot derive a
+    # trustworthy replacement from one edited file, so preserve the source
+    # value instead of writing a misleading SHA1 into the footer.  Per-entry
+    # raw-data hashes are recalculated above in ``calculate_tencent_hashes``.
 
     out_buf += new_footer
 

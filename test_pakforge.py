@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import stat
+import zlib
 import os
 import subprocess
 import sys
@@ -11,6 +13,11 @@ import tempfile
 from pathlib import Path
 
 import pakforge
+from pakforge_core import (
+    TencentPakFile,
+    calculate_tencent_hashes,
+    validate_encryption_metadata,
+)
 
 ROOT = Path(__file__).resolve().parent
 PAKFORGE = ROOT / "pakforge.py"
@@ -37,13 +44,42 @@ def main() -> None:
         raise AssertionError("path traversal was accepted")
 
     parsed = pakforge.parser().parse_args([
-        "repack", "source.pak", "edited", "output.pak", "--target-prefix", "Content/Lua"
+        "repack", "source.pak", "edited", "output.pak", "--target-prefix", "Content/Lua", "--verify"
     ])
     assert parsed.target_prefix == "Content/Lua"
+    assert parsed.verify is True
+
+    raw = b"offline-pakforge-fixture"
+    hashes = calculate_tencent_hashes(raw, r"Content\Lua\MyMod.lua", 12)
+    assert hashes["content_hash"] == hashlib.sha1(raw).digest()
+    assert hashes["content_org_hash"] == hashlib.sha1(raw).digest()
+    assert hashes["stem_hash"] == (zlib.crc32("mymod".encode("utf-32le")) & 0xFFFFFFFF)
+    assert hashes["unk2"] == hashlib.sha1(b"content/lua/mymod.lua").digest()
+    assert str(TencentPakFile._construct_mount_point("../../../Content/Lua")) == "../../../Content/Lua"
+    assert str(TencentPakFile._safe_mount_point_for_output(TencentPakFile._construct_mount_point("../../../Content/Lua"))) == "Content/Lua"
+    try:
+        validate_encryption_metadata(True, 999, 12)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("unknown encrypted-entry method was accepted")
+
+    with tempfile.TemporaryDirectory(prefix="pakforge-luac-") as compiler_dir:
+        compiler_root = Path(compiler_dir)
+        for name in ("luac", "luac51", "luac5.1"):
+            path = compiler_root / name
+            path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            path.chmod(path.stat().st_mode | stat.S_IXUSR)
+        previous_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = f"{compiler_root}:{previous_path}"
+        try:
+            assert Path(pakforge.find_lua51_compiler()).name == "luac5.1"
+        finally:
+            os.environ["PATH"] = previous_path
 
     version = run("--version")
     assert version.returncode == 0
-    assert version.stdout.strip() == "PakForge 1.3.0"
+    assert version.stdout.strip() == "PakForge 1.3.1"
 
     with tempfile.TemporaryDirectory(prefix="pakforge-test-") as raw:
         root = Path(raw)

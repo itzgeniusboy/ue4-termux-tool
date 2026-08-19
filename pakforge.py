@@ -15,9 +15,11 @@ import importlib.util
 import platform
 import re
 import shutil
+import subprocess
 import sys
 import time
 import traceback
+import tempfile
 from pathlib import Path, PurePath
 
 try:
@@ -35,7 +37,7 @@ except ImportError as exc:
     ) from exc
 
 APP_NAME = "PakForge"
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 MANIFEST_NAME = ".pakforge-manifest.json"
 CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "pakforge"
 PROFILE_DIRECTORY = CONFIG_HOME / "profiles"
@@ -501,6 +503,7 @@ def lua_pipeline_command(args: argparse.Namespace) -> None:
         "attempts": attempts,
         "dry_run": bool(args.dry_run),
         "backup_requested": bool(getattr(args, "backup", False)),
+        "compile_lua": bool(getattr(args, "compile_lua", False)),
     }
     if args.dry_run:
         report_path = Path(args.report).expanduser() if args.report else output.with_suffix(output.suffix + ".plan.json")
@@ -513,12 +516,19 @@ def lua_pipeline_command(args: argparse.Namespace) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     backup = backup_file(output) if getattr(args, "backup", False) else None
     report["backup"] = str(backup) if backup else None
+    staging = tempfile.TemporaryDirectory(prefix="pakforge-lua-") if getattr(args, "compile_lua", False) else None
     try:
-        count = repack_pak_file_full(pak, lua_root, output, target_path=target_prefix, force_add=True)
+        pack_root = lua_root
+        if staging is not None:
+            pack_root, compiler = compile_lua_sources(lua_root, lua_files, Path(staging.name))
+            report["lua_compiler"] = compiler
+        count = repack_pak_file_full(pak, pack_root, output, target_path=target_prefix, force_add=True)
         if count <= 0:
             raise SystemExit("Lua pipeline produced no files.")
         verified, verified_od, _ = open_pak_auto(output, is_od)
     except (Exception, SystemExit):
+        if staging is not None:
+            staging.cleanup()
         if backup and backup.is_file():
             if output.exists():
                 output.unlink()
@@ -528,6 +538,8 @@ def lua_pipeline_command(args: argparse.Namespace) -> None:
     expected = {f"{target_prefix}/{relative}" for relative in report["lua_files"]}
     missing = sorted(expected - verified_paths)
     if missing:
+        if staging is not None:
+            staging.cleanup()
         if backup and backup.is_file():
             if output.exists():
                 output.unlink()
@@ -543,6 +555,8 @@ def lua_pipeline_command(args: argparse.Namespace) -> None:
     print(f"Lua pipeline complete: {count} file(s) added under {target_prefix}")
     print(f"Verified output: {output}")
     print(f"Report: {report_path}")
+    if staging is not None:
+        staging.cleanup()
 
 
 def build_command(args: argparse.Namespace) -> None:
@@ -673,6 +687,55 @@ def normalize_target_prefix(value: str | None) -> str | None:
     return '/'.join(parts)
 
 
+def find_lua51_compiler() -> str:
+    """Return a Lua 5.1 compiler, never silently preferring Lua 5.3+.
+
+    Lua bytecode is version-specific.  A generic ``luac`` executable is only
+    accepted when the caller explicitly sets ``PAKFORGE_ALLOW_NON51_LUAC=1``;
+    PakForge does not download untrusted binaries into Termux automatically.
+    Install a trusted distro package or set ``PAKFORGE_LUAC51`` to an audited
+    local executable instead.
+    """
+    candidates = []
+    configured = os.environ.get('PAKFORGE_LUAC51')
+    if configured:
+        candidates.append(configured)
+    candidates.extend(('luac5.1', 'luac51'))
+    for candidate in candidates:
+        resolved = shutil.which(candidate) if os.path.basename(candidate) == candidate else candidate
+        if resolved and Path(resolved).is_file() and os.access(resolved, os.X_OK):
+            return str(Path(resolved).resolve())
+    if os.environ.get('PAKFORGE_ALLOW_NON51_LUAC') == '1':
+        fallback = shutil.which('luac')
+        if fallback:
+            return fallback
+    raise SystemExit(
+        'Lua 5.1 compiler not found. Install luac5.1/luac51 from a trusted '
+        'Termux source or set PAKFORGE_LUAC51=/absolute/path/to/luac5.1.'
+    )
+
+
+def compile_lua_sources(lua_root: Path, lua_files: list[Path], staging_root: Path) -> tuple[Path, str]:
+    """Compile Lua sources with the selected Lua 5.1 compiler into staging."""
+    compiler = find_lua51_compiler()
+    compiled_root = staging_root / 'lua51-bytecode'
+    compiled_root.mkdir(parents=True, exist_ok=True)
+    for source in lua_files:
+        relative = source.relative_to(lua_root)
+        target = compiled_root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        completed = subprocess.run(
+            [compiler, '-o', str(target), str(source)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout or 'unknown compiler error').strip()
+            raise SystemExit(f'Lua 5.1 compilation failed for {relative}: {detail}')
+    return compiled_root, compiler
+
+
 def repack_command(args: argparse.Namespace) -> None:
     source_pak = require_file(args.source_pak, "Source PAK")
     edited = require_dir(args.edited_dir, "Edited directory")
@@ -690,6 +753,16 @@ def repack_command(args: argparse.Namespace) -> None:
         count = repack_pak_file_with_block_display(pak, edited, output)
     if count <= 0:
         raise SystemExit("No files were repacked.")
+    if args.verify:
+        try:
+            verified, verified_od, _ = open_pak_auto(output, args.is_od)
+            parser_mode = 'od' if verified_od else 'standard'
+            print(
+                f"Verification passed: {len(inventory(verified))} entries "
+                f"({parser_mode} parser)."
+            )
+        except SystemExit as exc:
+            raise SystemExit(f"Post-repack verification failed: {exc}") from exc
     print(f"Repacked {count} file(s) to: {output}")
 
 
@@ -744,6 +817,7 @@ def parser() -> argparse.ArgumentParser:
     lua.add_argument("--report")
     lua.add_argument("--dry-run", action="store_true")
     lua.add_argument("--verify", action="store_true", help="verify the repacked PAK (verification is enabled by default)")
+    lua.add_argument("--compile-lua", action="store_true", help="compile sources with luac5.1/luac51 before packing")
     lua.add_argument("--backup", action="store_true", help="backup an existing output and restore it if the workflow fails")
     lua.add_argument("--overwrite", action="store_true")
     lua.add_argument("--is-od", action="store_true")
@@ -789,6 +863,7 @@ def parser() -> argparse.ArgumentParser:
     repack.add_argument("--full", action="store_true")
     repack.add_argument("--target-prefix", help="add edited files under this relative directory inside the PAK")
     repack.add_argument("--overwrite", action="store_true")
+    repack.add_argument("--verify", action="store_true", help="reopen the output and validate its structure")
     repack.add_argument("--is-od", action="store_true")
     repack.set_defaults(func=repack_command)
 
