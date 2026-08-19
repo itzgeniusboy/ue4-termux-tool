@@ -19,6 +19,7 @@ PakForge supports direct PAK inspection, extraction, block-aware repacking, batc
 | `pakforge doctor` | Preflight-check a PAK, dependencies, parser mode, and storage. |
 | `pakforge diff` | Compare two asset directories and create a JSON change report. |
 | `pakforge build` | Run a profile-driven preflight, Lua build, backup, and verification workflow. |
+| `pakforge auto` | Run the offline unpack, Lua decompile, edit, Lua 5.1 compile, repack, and verify loop in one command. |
 | `tool logs` | List structured operation logs and show the latest log tail. |
 | `tool unpack/repack/inject` | Existing repak-based compatibility workflows. |
 
@@ -156,6 +157,17 @@ pakforge batch-unpack /sdcard/Download/paks /sdcard/Download/unpacked
 pakforge unpack /sdcard/Download/game.pak /sdcard/Download/game-unpacked --decompile-lua
 pakforge batch-unpack /sdcard/Download/paks /sdcard/Download/unpacked --decompile-lua
 
+# Run the complete offline unpack -> decompile -> edit -> compile -> repack -> verify loop.
+pakforge auto \
+  --pak /sdcard/Download/base.pak \
+  --edit-dir /sdcard/Download/my_lua_edits \
+  --output /sdcard/Download/modded.pak \
+  --target-prefix Content/Lua \
+  --workers 4
+
+# Omit --edit-dir to pause in the temporary extracted tree for interactive edits.
+# The default report is modded.pak.auto-report.json; use --report to choose another path.
+
 # Create and verify an edited-directory manifest.
 pakforge manifest /sdcard/Download/game-unpacked
 pakforge verify /sdcard/Download/game-unpacked
@@ -166,6 +178,8 @@ The `--target-prefix` value must be a relative PAK directory; parent traversal i
 The native `unpack` and `repack` commands accept `--workers N` (default `4`). Extraction uses atomic per-file replacement and updates the progress display from the coordinator thread. Repack stages edited input files concurrently, then keeps payload serialization single-threaded so offsets, hashes, and index order remain deterministic. If the Termux runtime cannot create a worker pool, PakForge falls back to single-threaded processing. Set `--workers 1` for the most conservative memory profile.
 
 The optional `--decompile-lua` flag searches for `unluac_patched.jar` in the repository `SOURCE` directory, beside `pakforge.py`, or the system `PATH`. Java must also be available. Each extracted `.luac` remains unchanged; PakForge writes the decompiler output as a `.lua` sibling. For Tencent-style bytecode, the first 34 bytes are preserved and the remaining bytes are nibble-swapped only when byte index 33 is greater than 2, using a temporary staging copy. Decompilation is limited to 30 seconds per file. If the JAR, Java, or a valid decompilation result is unavailable, PakForge keeps the raw `.luac` and continues unpacking.
+
+The `auto` command is intended for authorized offline/test projects. It creates a temporary extraction workspace, decompiles available Lua bytecode, compares the supplied edit directory against the decompiled baseline, compiles only changed `.lua` files with Lua 5.1, injects the resulting `.luac` files below `--target-prefix`, reopens the output PAK for structural verification, and writes a JSON report. Temporary files are removed on success or failure. If `--edit-dir` is omitted, the command pauses for an interactive edit; CI/CD runs should always provide it. Existing output files are refused unless `--overwrite` is explicitly supplied.
 
 ## Structured bug logs
 

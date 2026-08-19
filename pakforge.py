@@ -38,7 +38,7 @@ except ImportError as exc:
     ) from exc
 
 APP_NAME = "PakForge"
-VERSION = "1.3.4"
+VERSION = "1.3.5"
 MANIFEST_NAME = ".pakforge-manifest.json"
 CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "pakforge"
 PROFILE_DIRECTORY = CONFIG_HOME / "profiles"
@@ -750,6 +750,213 @@ def decompile_extracted_lua(output_root: Path, timeout: float = 30.0) -> dict[st
     return result
 
 
+def _write_auto_report(report_path: Path, report: dict) -> None:
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+
+
+def _rename_compiled_lua_to_luac(compiled_root: Path, relative: Path) -> Path:
+    """Give compiled Lua 5.1 bytecode the `.luac` suffix expected by PAK assets."""
+    compiled_path = compiled_root / relative
+    bytecode_path = compiled_path.with_suffix(".luac")
+    if compiled_path != bytecode_path:
+        if not compiled_path.is_file():
+            raise SystemExit(f"Lua compiler did not produce output: {compiled_path}")
+        compiled_path.replace(bytecode_path)
+    return bytecode_path
+
+
+def auto_command(args: argparse.Namespace) -> None:
+    """Run unpack -> decompile -> edit -> compile -> repack -> verify for offline builds."""
+    source_pak = require_file(args.pak, "Source PAK")
+    output = Path(args.output).expanduser().resolve()
+    if output.exists() and output.is_dir():
+        raise SystemExit(f"Output path is a directory, expected a PAK file: {output}")
+    refuse_existing(output, args.overwrite)
+
+    target_prefix = normalize_target_prefix(args.target_prefix or "Content/Lua")
+    workers = max(1, int(getattr(args, "workers", 4)))
+    edit_dir_arg = getattr(args, "edit_dir", None)
+    edit_dir = require_dir(edit_dir_arg, "Lua edit directory") if edit_dir_arg else None
+    report_path = (
+        Path(args.report).expanduser().resolve()
+        if getattr(args, "report", None)
+        else output.with_suffix(output.suffix + ".auto-report.json")
+    )
+    backup = backup_file(output) if args.overwrite else None
+    report = {
+        "format": 1,
+        "tool": APP_NAME,
+        "version": VERSION,
+        "workflow": "auto",
+        "status": "running",
+        "source_pak": str(source_pak),
+        "edit_dir": str(edit_dir) if edit_dir else None,
+        "output": str(output),
+        "target_prefix": target_prefix,
+        "workers": workers,
+        "decompile": None,
+        "lua_compiler": None,
+        "modified_files": [],
+        "replaced_files": [],
+        "backup": str(backup) if backup else None,
+    }
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="pakforge-auto-") as temporary_name:
+            temporary_root = Path(temporary_name)
+            unpacked_root = temporary_root / "unpacked"
+
+            # Reuse the normal unpack command so mount-point sanitization,
+            # atomic extraction, manifests, and optional Lua decompilation stay
+            # identical to the standalone workflow.
+            unpack_command(
+                argparse.Namespace(
+                    pak=str(source_pak),
+                    output=str(unpacked_root),
+                    overwrite=True,
+                    workers=workers,
+                    is_od=args.is_od,
+                    decompile_lua=False,
+                )
+            )
+            report["decompile"] = decompile_extracted_lua(unpacked_root)
+
+            # Snapshot decompiled sources before waiting for interactive edits.
+            baseline_root = unpacked_root / target_prefix
+            before_hashes = {
+                path.relative_to(baseline_root).as_posix(): sha256_file(path)
+                for path in baseline_root.rglob("*.lua")
+                if path.is_file()
+            }
+
+            if edit_dir is None:
+                interactive_edit_dir = unpacked_root / target_prefix
+                interactive_edit_dir.mkdir(parents=True, exist_ok=True)
+                print(
+                    f"[PakForge] Edit the decompiled Lua files in: {interactive_edit_dir}\n"
+                    "[PakForge] Press Enter here when your offline edits are complete."
+                )
+                try:
+                    input()
+                except EOFError as exc:
+                    raise SystemExit("No interactive input available; pass --edit-dir for CI/CD.") from exc
+                edit_dir = interactive_edit_dir
+
+            lua_files = sorted(path for path in edit_dir.rglob("*.lua") if path.is_file())
+            if not lua_files:
+                raise SystemExit(f"No .lua files found in edit directory: {edit_dir}")
+
+            # Compare explicit edits against the decompiled baseline when one
+            # exists. New files are also treated as modifications.
+            changed_files = []
+            for source in lua_files:
+                relative = source.relative_to(edit_dir)
+                source_hash = sha256_file(source)
+                baseline_hash = before_hashes.get(relative.as_posix())
+                if edit_dir != baseline_root and baseline_hash is None:
+                    baseline_path = baseline_root / relative
+                    baseline_hash = sha256_file(baseline_path) if baseline_path.is_file() else None
+                if baseline_hash != source_hash:
+                    changed_files.append((source, relative, baseline_hash, source_hash))
+
+            if not changed_files:
+                raise SystemExit("No modified .lua files found in the edit directory.")
+
+            report["modified_files"] = [
+                {
+                    "relative": relative.as_posix(),
+                    "source": str(source),
+                    "before_sha256": before_hash,
+                    "source_sha256": source_hash,
+                }
+                for source, relative, before_hash, source_hash in changed_files
+            ]
+
+            compiler = ensure_lua51_installed()
+            report["lua_compiler"] = compiler
+            compile_root = temporary_root / "compiled"
+            compiled_root, _ = compile_lua_sources(
+                edit_dir,
+                [source for source, _, _, _ in changed_files],
+                compile_root,
+                compiler=compiler,
+            )
+
+            # Keep a visible compiled overlay in the unpacked workspace, while
+            # passing only the overlay to repack so generated `.lua` siblings,
+            # manifests, and debug logs are never accidentally added to the PAK.
+            for _, relative, _, _ in changed_files:
+                compiled_path = _rename_compiled_lua_to_luac(compiled_root, relative)
+                pak_relative = Path(target_prefix) / compiled_path.relative_to(compiled_root)
+                workspace_path = unpacked_root / pak_relative
+                workspace_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(compiled_path, workspace_path)
+                report["replaced_files"].append(
+                    {
+                        "relative": relative.with_suffix(".luac").as_posix(),
+                        "pak_path": pak_relative.as_posix(),
+                        "sha256": sha256_file(compiled_path),
+                        "source": str(changed_files[[item[1] for item in changed_files].index(relative)][0]),
+                    }
+                )
+
+            pak, _, _ = open_pak_auto(source_pak, args.is_od)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            count = repack_pak_file_full(
+                pak,
+                compiled_root,
+                output,
+                target_path=target_prefix,
+                force_add=True,
+                workers=workers,
+            )
+            if count <= 0:
+                raise SystemExit("Auto pipeline produced no repacked files.")
+
+            verified, verified_od, _ = open_pak_auto(output, args.is_od)
+            verified_paths = {row["path"].replace("\\\\", "/").lower() for row in inventory(verified)}
+            expected_paths = {
+                (Path(target_prefix) / relative.with_suffix(".luac")).as_posix().lower()
+                for _, relative, _, _ in changed_files
+            }
+            missing = sorted(expected_paths - verified_paths)
+            if missing:
+                raise SystemExit("Auto verification failed; missing paths: " + ", ".join(missing[:10]))
+
+            report.update(
+                {
+                    "status": "verified",
+                    "repacked_count": count,
+                    "verified_parser_mode": "od" if verified_od else "standard",
+                    "verified_count": len(expected_paths),
+                    "temporary_directory_removed": True,
+                }
+            )
+            _write_auto_report(report_path, report)
+            print(f"[PakForge] Auto pipeline complete: {count} file(s) repacked and verified.")
+            print(f"[PakForge] Output: {output}")
+            print(f"[PakForge] Report: {report_path}")
+    except (Exception, SystemExit) as exc:
+        report.update(
+            {
+                "status": "failed",
+                "error": str(exc),
+                "temporary_directory_removed": True,
+            }
+        )
+        try:
+            _write_auto_report(report_path, report)
+        except OSError:
+            pass
+        if backup and backup.is_file():
+            output.unlink(missing_ok=True)
+            backup.replace(output)
+        elif output.is_file():
+            output.unlink()
+        raise
+
+
 def unpack_command(args: argparse.Namespace) -> None:
     pak_path = require_file(args.pak, "PAK")
     output = Path(args.output).expanduser() if args.output else pak_path.with_name(pak_path.stem + "-unpacked")
@@ -1100,6 +1307,20 @@ def parser() -> argparse.ArgumentParser:
     repack.add_argument("--verify", action="store_true", help="reopen the output and validate its structure")
     repack.add_argument("--is-od", action="store_true")
     repack.set_defaults(func=repack_command)
+
+    auto = sub.add_parser(
+        "auto",
+        help="run unpack, Lua decompile, edit, Lua 5.1 compile, repack, and verify",
+    )
+    auto.add_argument("--pak", required=True, help="source PAK file")
+    auto.add_argument("--edit-dir", help="directory containing modified .lua sources; omit for an interactive pause")
+    auto.add_argument("--output", required=True, help="output PAK path")
+    auto.add_argument("--target-prefix", default="Content/Lua", help="PAK directory for edited Lua files (default: Content/Lua)")
+    auto.add_argument("--report", help="JSON report path")
+    auto.add_argument("--workers", type=int, default=4, help="parallel unpack/repack workers (default: 4)")
+    auto.add_argument("--overwrite", action="store_true")
+    auto.add_argument("--is-od", action="store_true")
+    auto.set_defaults(func=auto_command)
 
     manifest = sub.add_parser("manifest", help="create a SHA-256 manifest")
     manifest.add_argument("directory")

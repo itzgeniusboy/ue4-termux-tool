@@ -2,6 +2,7 @@
 """Fast tests for PakForge's wrapper workflows without requiring a real PAK file."""
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import stat
@@ -55,6 +56,13 @@ def main() -> None:
     assert unpack_parsed.workers == 2
     repack_parsed = pakforge.parser().parse_args(["repack", "source.pak", "edited", "out.pak", "--workers", "3"])
     assert repack_parsed.workers == 3
+    auto_parsed = pakforge.parser().parse_args([
+        "auto", "--pak", "source.pak", "--edit-dir", "edits", "--output", "out.pak",
+        "--target-prefix", "Content/Lua", "--workers", "2",
+    ])
+    assert auto_parsed.command == "auto"
+    assert auto_parsed.target_prefix == "Content/Lua"
+    assert auto_parsed.workers == 2
 
     with tempfile.TemporaryDirectory(prefix="pakforge-workers-") as staging_dir:
         root = Path(staging_dir)
@@ -191,9 +199,64 @@ def main() -> None:
             assert result == {"found": 1, "decompiled": 0, "fallback": 1}
             assert luac.is_file()
 
+    with tempfile.TemporaryDirectory(prefix="pakforge-auto-test-") as auto_dir:
+        root = Path(auto_dir)
+        source_pak = root / "base.pak"
+        source_pak.write_bytes(b"test-pak")
+        edit_dir = root / "edits" / "Mods"
+        edit_dir.mkdir(parents=True)
+        (edit_dir / "ui.lua").write_text("return 2\\n", encoding="utf-8")
+        output = root / "modded.pak"
+        report_path = root / "auto-report.json"
+        fake_pak = object()
+
+        def fake_unpack(args):
+            baseline = Path(args.output) / "Content" / "Lua" / "Mods" / "ui.lua"
+            baseline.parent.mkdir(parents=True, exist_ok=True)
+            baseline.write_text("return 1\\n", encoding="utf-8")
+
+        def fake_compile(lua_root, lua_files, staging_root, compiler=None):
+            compiled = Path(staging_root) / "lua51-bytecode" / "Mods" / "ui.lua"
+            compiled.parent.mkdir(parents=True, exist_ok=True)
+            compiled.write_bytes(b"lua51-bytecode")
+            return compiled.parents[1], compiler
+
+        def fake_repack(pak, edited_root, output_path, target_path=None, force_add=False, workers=4):
+            assert target_path == "Content/Lua"
+            assert force_add is True
+            assert (Path(edited_root) / "Mods" / "ui.luac").read_bytes() == b"lua51-bytecode"
+            output_path.write_bytes(b"verified-pak")
+            return 1
+
+        with patch.object(pakforge, "unpack_command", side_effect=fake_unpack), patch.object(
+            pakforge, "decompile_extracted_lua", return_value={"found": 1, "decompiled": 1, "fallback": 0}
+        ), patch.object(
+            pakforge, "ensure_lua51_installed", return_value="/usr/bin/luac5.1"
+        ), patch.object(
+            pakforge, "compile_lua_sources", side_effect=fake_compile
+        ), patch.object(
+            pakforge, "repack_pak_file_full", side_effect=fake_repack
+        ), patch.object(
+            pakforge, "open_pak_auto", side_effect=[(fake_pak, False, None), (fake_pak, False, None)]
+        ), patch.object(
+            pakforge, "inventory", return_value=[{"path": "Content/Lua/Mods/ui.luac"}]
+        ):
+            pakforge.auto_command(
+                argparse.Namespace(
+                    pak=str(source_pak), edit_dir=str(edit_dir.parent), output=str(output),
+                    target_prefix="Content/Lua", report=str(report_path), workers=2,
+                    overwrite=False, is_od=False,
+                )
+            )
+        auto_report = json.loads(report_path.read_text(encoding="utf-8"))
+        assert auto_report["status"] == "verified"
+        assert auto_report["modified_files"][0]["relative"] == "Mods/ui.lua"
+        assert auto_report["replaced_files"][0]["pak_path"] == "Content/Lua/Mods/ui.luac"
+        assert output.read_bytes() == b"verified-pak"
+
     version = run("--version")
     assert version.returncode == 0
-    assert version.stdout.strip() == "PakForge 1.3.4"
+    assert version.stdout.strip() == "PakForge 1.3.5"
 
     with tempfile.TemporaryDirectory(prefix="pakforge-test-") as raw:
         root = Path(raw)

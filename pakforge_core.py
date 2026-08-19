@@ -1114,9 +1114,12 @@ def repack_pak_file_full(pak_file, edited_root, output_path, target_path=None, f
     if target_path:
         console.print(f'[bold cyan]🎯 Target path: {target_path}[/bold cyan]')
     
-    # Get all files from edit folder
+    # Get all files from edit folder. Relative paths are retained so an
+    # auto-pipeline edit such as ``Mods/UI.lua`` becomes
+    # ``<target-prefix>/Mods/UI.luac`` instead of being flattened by name.
+    edit_root_path = Path(edited_root).resolve()
     edit_files = []
-    for p in Path(edited_root).rglob('*'):
+    for p in edit_root_path.rglob('*'):
         if p.is_file():
             edit_files.append(p)
     
@@ -1146,21 +1149,34 @@ def repack_pak_file_full(pak_file, edited_root, output_path, target_path=None, f
         else:
             target_path = target_path.strip('/') + '/' # Ensure standard trailing slash
     
-    # Build name→entry map
+    # Build both basename and full-path maps. Basename matching preserves
+    # legacy behavior; exact paths make target-prefix additions deterministic.
     pak_name_map = {}
+    pak_path_map = {}
     for dir_path, files in pak_file._index.items():
         for name, entry in files.items():
             full_path = str(PurePath(dir_path)/name).replace('\\', '/')
             pak_name_map.setdefault(name.lower(), []).append((full_path, entry))
+            pak_path_map[full_path.lower()] = (full_path, entry)
 
     # Find matching files
     edited = {}
     
     for p in edit_files:
         fl = p.name.lower()
+        relative_edit = p.resolve().relative_to(edit_root_path).as_posix()
+        target_candidate = (
+            f"{target_path.rstrip('/')}/{relative_edit}"
+            if target_path else None
+        )
         found_match = False
-        
-        if fl in pak_name_map:
+
+        if target_candidate and target_candidate.lower() in pak_path_map:
+            full_path, ent = pak_path_map[target_candidate.lower()]
+            edited[full_path] = (p, ent)
+            found_match = True
+
+        if not found_match and fl in pak_name_map:
             cands = pak_name_map[fl]
             if target_path:
                 target_candidates = [(fp, e) for fp, e in cands if target_path.strip('/') in fp]
@@ -1176,7 +1192,7 @@ def repack_pak_file_full(pak_file, edited_root, output_path, target_path=None, f
                 sm = [(fp, e) for fp, e in cands if e.uncompressed_size == sz]
                 fp, ent = sm[0] if sm else cands[0]
                 if target_path:
-                    new_fp = f"{target_path.rstrip('/')}/{p.name}"
+                    new_fp = target_candidate or f"{target_path.rstrip('/')}/{p.name}"
                     edited[new_fp] = (p, ent)
                 else:
                     edited[fp] = (p, ent)
@@ -1190,7 +1206,7 @@ def repack_pak_file_full(pak_file, edited_root, output_path, target_path=None, f
                     if Path(name).stem.lower() == stem and Path(name).suffix.lower() == ext:
                         full_path = str(PurePath(dir_path)/name).replace('\\', '/')
                         if target_path:
-                            new_fp = f"{target_path.rstrip('/')}/{p.name}"
+                            new_fp = target_candidate or f"{target_path.rstrip('/')}/{p.name}"
                             edited[new_fp] = (p, entry)
                         else:
                             edited[full_path] = (p, entry)
@@ -1216,7 +1232,7 @@ def repack_pak_file_full(pak_file, edited_root, output_path, target_path=None, f
                     if template_entry: break
             
             if template_entry:
-                new_fp = f"{target_path.rstrip('/')}/{p.name}"
+                new_fp = target_candidate or f"{target_path.rstrip('/')}/{p.name}"
                 edited[new_fp] = (p, template_entry)
 
     if not edited:
