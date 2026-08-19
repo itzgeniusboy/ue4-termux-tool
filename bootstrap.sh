@@ -164,7 +164,7 @@ setup_bootstrap() {
   write_status running "Preparing Termux packages" 5 1 "Preparing Termux packages"
   printf '%s\n' "[1/4] Preparing Termux packages..."
   run_with_heartbeat "Updating Termux package lists" 5 10 1 pkg update -y || return 1
-  run_with_heartbeat "Installing minimum Termux packages" 10 20 1 pkg install -y curl git python python-pip unzip rust || return 1
+  run_with_heartbeat "Installing minimum Termux runtime" 10 20 1 pkg install -y curl git python || return 1
 
   write_status running "Enabling Android storage access" 25 2 "Enabling Android storage access"
   printf '%s\n' "[2/4] Enabling Android storage access..."
