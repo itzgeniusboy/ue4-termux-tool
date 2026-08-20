@@ -4,6 +4,16 @@ A simple **Termux command-line utility for authorized Unreal Engine 4 PAK/OBB fi
 
 Use this tool only with files that you own or are authorized to modify. It is not intended to bypass DRM, anti-cheat, access controls, or unknown encryption.
 
+## Easiest first-time install
+
+In the official Termux app, run this **single command**. It checks the Termux environment, installs the downloader and Paktool dependencies, and automatically opens the OpenCode-style PAK interface:
+
+```bash
+if command -v curl >/dev/null 2>&1; then curl -fsSL https://raw.githubusercontent.com/itzgeniusboy/pak-unpacker-termux/main/bootstrap.sh | sh; else pkg install -y curl && curl -fsSL https://raw.githubusercontent.com/itzgeniusboy/pak-unpacker-termux/main/bootstrap.sh | sh; fi
+```
+
+Run it after completing `termux-setup-storage`; do not paste it into the `y/n` confirmation prompt. If `pkg` itself is missing, see [Base Termux recovery](#base-termux-recovery).
+
 ## Complete Termux installation
 
 Run each command separately and wait for the Termux prompt to return before running the next command.
@@ -47,24 +57,22 @@ pkg install -y git python python-pip curl
 ### 3. Install Paktool
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/itzgeniusboy/pak-unpacker-termux/main/bootstrap.sh | bash
+curl -fsSL https://raw.githubusercontent.com/itzgeniusboy/pak-unpacker-termux/main/bootstrap.sh | sh
 ```
 
 The installer installs the required Python libraries but does **not** upgrade or replace Termux's protected `python-pip` package.
 
-### 4. Activate and test the command
+### 4. Automatic launcher
+
+When the bootstrap command finishes, it automatically starts `paktool-opencode`. For later launches, simply run:
 
 ```bash
-export PATH="$HOME/.local/bin:$HOME/bin:$PREFIX/bin:$PATH"
-hash -r
-tool --help
+paktool-opencode
 ```
 
-If `tool` is still not found, restart Termux and run:
+The ordinary CLI is also available:
 
 ```bash
-export PATH="$HOME/.local/bin:$HOME/bin:$PREFIX/bin:$PATH"
-hash -r
 tool --help
 ```
 
@@ -234,10 +242,7 @@ The installer also provides `paktool-opencode`. This command starts the OpenCode
 Run:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/itzgeniusboy/pak-unpacker-termux/main/bootstrap.sh | bash
-export PATH="$HOME/.local/bin:$HOME/bin:$PREFIX/bin:$PATH"
-hash -r
-paktool-opencode
+curl -fsSL https://raw.githubusercontent.com/itzgeniusboy/pak-unpacker-termux/main/bootstrap.sh | sh
 ```
 
 The first-run flow is:
@@ -274,6 +279,26 @@ SM4_SECRET_NEW[0..14]
 
 The values are used internally for supported encrypted PAK metadata and are not printed by the CLI. Keep the repository private if these keys are not intended for public distribution.
 
+## Base Termux recovery
+
+If the message says `pkg`, `bash`, or `curl` is not installed, restore the standard Termux path without angle brackets or LaTeX placeholders:
+
+```bash
+export PREFIX=/data/data/com.termux/files/usr
+export PATH="$PREFIX/bin:/system/bin:/system/xbin:$PATH"
+command -v pkg
+```
+
+If `pkg` is still not found, check whether the base package manager exists:
+
+```bash
+echo "$PREFIX"
+printf '%s\n' "$PATH"
+ls -l /data/data/com.termux/files/usr/bin/pkg 2>/dev/null || true
+```
+
+When `/data/data/com.termux/files/usr/bin/pkg` does not exist, install the official Termux app from [F-Droid](https://f-droid.org/packages/com.termux/) or the [official Termux GitHub releases](https://github.com/termux/termux-app/releases), open it once, and rerun the single-command installer. Do not mix old Play Store Termux packages with F-Droid/GitHub Termux packages.
+
 ## Troubleshooting
 
 If the earlier installer stopped with:
@@ -282,13 +307,10 @@ If the earlier installer stopped with:
 ERROR: Installing pip is forbidden, this will break the python-pip package (termux).
 ```
 
-Run the corrected bootstrap again. Do not run `pip install --upgrade pip` in Termux:
+Run the single-command installer again. Do not run `pip install --upgrade pip` in Termux:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/itzgeniusboy/pak-unpacker-termux/main/bootstrap.sh | bash
-export PATH="$HOME/.local/bin:$HOME/bin:$PREFIX/bin:$PATH"
-hash -r
-tool --help
+curl -fsSL https://raw.githubusercontent.com/itzgeniusboy/pak-unpacker-termux/main/bootstrap.sh | sh
 ```
 
 If `tool` is still unavailable, check the installation directory:
