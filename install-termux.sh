@@ -61,6 +61,15 @@ SCRIPT_DIR="$SCRIPT_DIR"
 STATE_DIR="\${XDG_STATE_HOME:-\$HOME/.local/state}/pakforge"
 mkdir -p "\$STATE_DIR"
 
+SDCARD_DOWNLOAD_DIR="/sdcard/Download"
+SDCARD_EDIT_DIR="\$SDCARD_DOWNLOAD_DIR/EDIT"
+SDCARD_UNPACKED_DIR="\$SDCARD_DOWNLOAD_DIR/UNPACKED"
+if mkdir -p "\$SDCARD_DOWNLOAD_DIR" "\$SDCARD_EDIT_DIR" "\$SDCARD_UNPACKED_DIR"; then
+  printf '%s\\n' "[PakForge] SD-card folders ready: \$SDCARD_DOWNLOAD_DIR, \$SDCARD_EDIT_DIR, \$SDCARD_UNPACKED_DIR"
+else
+  printf '%s\\n' "[PakForge] SD-card folders could not be created. Run: termux-setup-storage" >&2
+fi
+
 UPDATE_LOG="\$STATE_DIR/update.log"
 UPDATE_STATUS="\$STATE_DIR/update-status.json"
 if [ "\${1:-}" = "update-status" ]; then
