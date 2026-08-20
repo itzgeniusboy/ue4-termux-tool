@@ -491,7 +491,40 @@ def run_repak(binary: str, aes_key: str | None, args: list[str]) -> None:
                 f"repak failed with exit code {completed.returncode}: {detail}",
                 completed.returncode,
             )
-        fail(f"repak failed with exit code {completed.returncode}", completed.returncode)
+
+        binary_path = Path(shutil.which(binary) or binary).expanduser()
+        context: list[str] = []
+        try:
+            version_result = subprocess.run(
+                [binary, "--version"],
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=5,
+            )
+            version_output = (version_result.stdout.strip() or version_result.stderr.strip()).strip()
+            if version_output:
+                context.append(f"repak --version: {version_output[-800:]}")
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            context.append(f"repak --version check failed: {type(exc).__name__}")
+
+        if not binary_path.is_file() or not os.access(binary_path, os.X_OK):
+            context.append(
+                "repak binary is missing or not executable, reinstall with bash install-termux.sh"
+            )
+        else:
+            context.append(
+                "repak produced no output — this usually means the input PAK is corrupted, "
+                "the AES key is wrong, or repak crashed natively. Try: repak --version to "
+                "confirm the binary works, and re-run with a known-good PAK file."
+            )
+
+        fail(
+            f"repak failed with exit code {completed.returncode}: {' '.join(context)}",
+            completed.returncode,
+        )
 
 
 def pak_unpack(args: argparse.Namespace) -> None:
