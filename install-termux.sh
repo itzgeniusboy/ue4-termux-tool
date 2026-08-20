@@ -49,8 +49,69 @@ rm -f "$BIN_DIR/ue4tool" "$BIN_DIR/pakforge"
 cat > "$BIN_DIR/tool" <<EOF
 #!/data/data/com.termux/files/usr/bin/bash
 set -euo pipefail
+SCRIPT_DIR="$SCRIPT_DIR"
+STATE_DIR="\${XDG_STATE_HOME:-\$HOME/.local/state}/pakforge"
+UPDATE_LOG="\$STATE_DIR/update.log"
+mkdir -p "\$STATE_DIR"
+
+if [ "\${PAKFORGE_NO_UPDATE:-0}" != "1" ] && [ "\${UE4TOOL_LEGACY:-0}" != "1" ] && [ -d "\$SCRIPT_DIR/.git" ]; then
+  (
+    cd "\$SCRIPT_DIR"
+    now="\$(date -Iseconds)"
+    dirty=0
+    stash_name=""
+    restore_stash() {
+      if [ "\$dirty" = "1" ]; then
+        if git stash pop --index >/dev/null 2>&1; then
+          printf '%s\\n' "\$now PakForge restored local changes after update failure or no-op." >> "\$UPDATE_LOG"
+        else
+          printf '%s\\n' "\$now PakForge could not restore local changes automatically; use git stash list and git stash pop." >> "\$UPDATE_LOG"
+        fi
+      fi
+    }
+    if [ -n "\$(git status --porcelain --untracked-files=all)" ]; then
+      dirty=1
+      stash_name="pakforge-tool-autoupdate-\$(date +%Y%m%d-%H%M%S)"
+      if git stash push --include-untracked --message "\$stash_name" >/dev/null 2>&1; then
+        printf '%s\\n' "\$now PakForge tool saved local changes in stash \$stash_name." >> "\$UPDATE_LOG"
+      else
+        printf '%s\\n' "\$now PakForge tool could not save local changes; current source was kept." >> "\$UPDATE_LOG"
+        exit 0
+      fi
+    fi
+    before="\$(git rev-parse HEAD 2>/dev/null || true)"
+    updated=0
+    if git fetch --quiet origin main; then
+      if git merge --ff-only --quiet origin/main; then
+        after="\$(git rev-parse HEAD)"
+        [ "\$before" != "\$after" ] && updated=1
+      else
+        backup_branch="pakforge-tool-backup-\$(date +%Y%m%d-%H%M%S)"
+        if git branch "\$backup_branch" "\$before" >/dev/null 2>&1 && git reset --hard origin/main >/dev/null 2>&1; then
+          updated=1
+          printf '%s\\n' "\$now PakForge tool installed origin/main; previous commits preserved in \$backup_branch." >> "\$UPDATE_LOG"
+        else
+          restore_stash
+          printf '%s\\n' "\$now PakForge tool could not synchronize origin/main safely." >> "\$UPDATE_LOG"
+          exit 0
+        fi
+      fi
+      if [ "\$updated" = "1" ]; then
+        printf '%s\\n' "\$now PakForge tool installed the latest GitHub source before opening." >> "\$UPDATE_LOG"
+        SKIP_PACKAGES=1 PAKFORGE_DEFER_SETUP=1 bash "\$SCRIPT_DIR/install-termux.sh" >> "\$UPDATE_LOG" 2>&1 || true
+      else
+        restore_stash
+        printf '%s\\n' "\$now PakForge tool was already on the latest origin/main source." >> "\$UPDATE_LOG"
+      fi
+    else
+      restore_stash
+      printf '%s\\n' "\$now PakForge tool could not contact GitHub; current source was kept." >> "\$UPDATE_LOG"
+    fi
+  )
+fi
+
 if [ "\${UE4TOOL_LEGACY:-0}" != "1" ]; then
-  exec "$BIN_DIR/pakforge" "\$@"
+  PAKFORGE_NO_UPDATE=1 exec "$BIN_DIR/pakforge" "\$@"
 fi
 exec python3 "$SCRIPT_DIR/ue4tool.py" "\$@"
 EOF

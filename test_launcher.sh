@@ -50,6 +50,10 @@ grep -Fq 'format_bytes' "$ROOT/pakforge_first_run.py"
 grep -Fq '\033[H\033[J' "$ROOT/pakforge_first_run.py"
 grep -Fq 'exec "$PREFIX_DIR/bin/pakforge"' "$ROOT/bootstrap.sh"
 grep -Fq 'UE4TOOL_LEGACY' "$PREFIX_DIR/bin/tool"
+grep -Fq 'git fetch --quiet origin main' "$PREFIX_DIR/bin/tool"
+grep -Fq 'PakForge tool installed the latest GitHub source before opening.' "$PREFIX_DIR/bin/tool"
+grep -Fq 'pakforge-tool-autoupdate-' "$PREFIX_DIR/bin/tool"
+grep -Fq 'PAKFORGE_NO_UPDATE=1 exec' "$PREFIX_DIR/bin/tool"
 grep -Fq "exec \"$PREFIX_DIR/bin/pakforge\"" "$PREFIX_DIR/bin/tool"
 UE4TOOL_LEGACY=1 PATH="$PREFIX_DIR/bin:$REAL_PATH" bash "$PREFIX_DIR/bin/tool" --help
 printf '%s\n' 'launcher-tests-ok'
