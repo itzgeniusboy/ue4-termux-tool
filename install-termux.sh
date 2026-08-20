@@ -44,8 +44,19 @@ else
   python3 -m pip install --upgrade rich pytz gmalg pycryptodome zstandard
 fi
 
-printf '%s\n' "[4/5] Installing tool commands..."
-rm -f "$BIN_DIR/paktool_support" "$BIN_DIR/paktool"
+printf '%s\n' "[4/5] Installing Paktool command..."
+# Remove only launchers that are identifiable as this project's retired tools.
+# This prevents an older PakForge/UE4 launcher earlier in PATH from shadowing
+# the fresh Paktool command while leaving unrelated user commands untouched.
+LEGACY_MARKER_RE='PakForge|pakforge|UE4 TERMUX TOOL|ue4tool.py|featuresticleak'
+for candidate in "$HOME/.local/bin/paktool" "$HOME/bin/paktool" "$BIN_DIR/paktool"; do
+  if [ -f "$candidate" ] && [ "$candidate" != "$BIN_DIR/paktool" ] && grep -Eiq "$LEGACY_MARKER_RE" "$candidate" 2>/dev/null; then
+    printf '%s\n' "Replacing stale Paktool launcher: $candidate"
+    rm -f "$candidate"
+    ln -s "$BIN_DIR/paktool" "$candidate"
+  fi
+done
+rm -f "$BIN_DIR/paktool_support" "$BIN_DIR/pakforge" "$BIN_DIR/tool" "$BIN_DIR/ue4tool" "$BIN_DIR/paktool"
 cat > "$BIN_DIR/paktool" <<EOF
 #!/data/data/com.termux/files/usr/bin/bash
 set -euo pipefail
@@ -177,4 +188,9 @@ if [ "${PAKTOOL_DEFER_SETUP:-0}" != "1" ]; then
   command -v repak >/dev/null 2>&1 || { printf '%s\n' "Error: repak is not available in PATH." >&2; exit 1; }
 fi
 command -v "$BIN_DIR/paktool" >/dev/null 2>&1 || { printf '%s\n' "Error: paktool command was not installed." >&2; exit 1; }
+if ! grep -Fq 'exec python3 "$SCRIPT_DIR/paktool.py"' "$BIN_DIR/paktool"; then
+  printf '%s\n' "Error: installed paktool launcher does not point to Paktool." >&2
+  exit 1
+fi
+printf '%s\n' "Paktool command installed at: $BIN_DIR/paktool"
 printf '%s\n' "Done. Run: paktool"
