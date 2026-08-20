@@ -9,7 +9,7 @@ Use this tool only with files that you own or are authorized to modify. It is no
 In the official Termux app, run this **single command**. It checks the Termux environment, installs the downloader and Paktool dependencies, and automatically opens the OpenCode-style PAK interface:
 
 ```bash
-if command -v curl >/dev/null 2>&1; then curl -fsSL https://raw.githubusercontent.com/itzgeniusboy/pak-unpacker-termux/main/bootstrap.sh | sh; else pkg install -y curl && curl -fsSL https://raw.githubusercontent.com/itzgeniusboy/pak-unpacker-termux/main/bootstrap.sh | sh; fi
+P=/data/data/com.termux/files/usr; if [ -x "$P/bin/pkg" ]; then "$P/bin/pkg" install -y termux-tools bash curl && "$P/bin/curl" -fsSL https://raw.githubusercontent.com/itzgeniusboy/pak-unpacker-termux/main/bootstrap.sh | "$P/bin/sh"; else echo "Official Termux base package manager not found. Install official Termux from F-Droid/GitHub, open it once, then rerun this command."; fi
 ```
 
 Run it after completing `termux-setup-storage`; do not paste it into the `y/n` confirmation prompt. If `pkg` itself is missing, see [Base Termux recovery](#base-termux-recovery).
