@@ -9,7 +9,9 @@ import os
 import sys
 import uuid
 import hashlib
+import json
 import platform
+import re
 import subprocess
 import tempfile
 import base64
@@ -62,6 +64,41 @@ def _log_operation_event(name: str, **fields: object) -> None:
     except Exception:
         # Logging must never make an otherwise valid PAK operation fail.
         pass
+
+
+def _sanitize_local_diagnostic(text: object) -> str:
+    """Redact keys and absolute paths while retaining useful traceback detail."""
+    value = str(text)
+    value = re.sub(r"(--aes-key(?:=|\s+))([^\s]+)", r"\1<redacted>", value, flags=re.IGNORECASE)
+    value = re.sub(r"(?i)(aes[_ -]?key\s*[:=]\s*)[^\s,;]+", r"\1<redacted>", value)
+    value = re.sub(r"(?:/|~/?)[^\s,;]+", "<path>", value)
+    return value
+
+
+def write_local_diagnostic(command: str, error: object, code: int, *, context: dict[str, object] | None = None) -> Path | None:
+    """Write a detailed, sanitized JSON diagnostic and return its path when possible."""
+    report_dir = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "paktool"
+    try:
+        report_dir.mkdir(parents=True, exist_ok=True)
+        report = report_dir / f"error-{int(time.time() * 1000)}-{os.getpid()}.json"
+        payload = {
+            "tool": "Paktool",
+            "command": command,
+            "error": _sanitize_local_diagnostic(error),
+            "exit_code": int(code),
+            "python": platform.python_version(),
+            "platform": platform.platform(),
+            "termux": bool(os.environ.get("PREFIX")),
+            "privacy": "No PAK contents, Lua source, AES keys, or full file paths are stored.",
+            "context": {
+                str(key): _sanitize_local_diagnostic(value) if isinstance(value, str) else value
+                for key, value in (context or {}).items()
+            },
+        }
+        report.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        return report
+    except (OSError, TypeError, ValueError):
+        return None
 
 
 # ==================== NEON TERMINAL THEME ====================
@@ -1027,25 +1064,70 @@ class TencentPakFile:
         out_path.mkdir(parents=True, exist_ok=True)
         jobs = []
         for dir_path, dir_content in self._index.items():
-            dir_parts = _safe_index_parts(dir_path)
+            try:
+                dir_parts = _safe_index_parts(dir_path)
+            except Exception as exc:
+                _log_operation_event(
+                    'unpack_unsafe_path_rejected',
+                    path_kind='directory',
+                    logical_path=str(dir_path),
+                    error=f'{type(exc).__name__}: {exc}',
+                )
+                raise
             current_out_path = out_path.joinpath(*dir_parts)
             current_out_path.mkdir(parents=True, exist_ok=True)
             for file_name, entry in dir_content.items():
-                file_parts = _safe_index_parts(file_name)
+                try:
+                    file_parts = _safe_index_parts(file_name)
+                except Exception as exc:
+                    _log_operation_event(
+                        'unpack_unsafe_path_rejected',
+                        path_kind='file',
+                        logical_path=str(PurePosixPath(dir_path) / file_name),
+                        error=f'{type(exc).__name__}: {exc}',
+                    )
+                    raise
                 if not file_parts:
-                    raise ValueError(f'Unsafe empty PAK file name: {file_name!r}')
-                jobs.append((current_out_path.joinpath(*file_parts), entry))
+                    error = ValueError(f'Unsafe empty PAK file name: {file_name!r}')
+                    _log_operation_event(
+                        'unpack_unsafe_path_rejected',
+                        path_kind='file',
+                        logical_path=str(PurePosixPath(dir_path) / file_name),
+                        error=f'{type(error).__name__}: {error}',
+                    )
+                    raise error
+                logical_path = (PurePosixPath(dir_path) / PurePosixPath(*file_parts)).as_posix()
+                jobs.append((current_out_path.joinpath(*file_parts), entry, logical_path))
 
         total_files = len(jobs)
+        _log_operation_event(
+            'unpack_extraction_plan',
+            entries=total_files,
+            workers=workers,
+            output_mount=str(self._mount_point),
+            parser_version=getattr(self._pak_info, 'version', None),
+        )
         try:
             worker_count = max(1, int(workers))
         except (TypeError, ValueError):
             worker_count = 4
 
         def extract_one(job):
-            file_path, entry = job
-            self._write_to_disk(file_path, entry, announce=False)
-            return file_path
+            file_path, entry, logical_path = job
+            try:
+                self._write_to_disk(file_path, entry, announce=False)
+                return file_path
+            except Exception as exc:
+                _log_operation_event(
+                    'unpack_entry_failed',
+                    entry=logical_path,
+                    error=f'{type(exc).__name__}: {exc}',
+                    compression_method=getattr(entry, 'compression_method', None),
+                    encrypted=bool(getattr(entry, 'encrypted', False)),
+                    stored_size=getattr(entry, 'size', None),
+                    uncompressed_size=getattr(entry, 'uncompressed_size', None),
+                )
+                raise
 
         with Progress(
             SpinnerColumn(),
@@ -1069,6 +1151,12 @@ class TencentPakFile:
                         future.result()
                         progress.update(task, advance=1)
             except (OSError, RuntimeError) as exc:
+                _log_operation_event(
+                    'unpack_parallel_fallback',
+                    workers=worker_count,
+                    entries=total_files,
+                    error=f'{type(exc).__name__}: {exc}',
+                )
                 console.print(
                     f"[bold yellow]Parallel extraction unavailable; retrying single-threaded: {exc}[/bold yellow]"
                 )
@@ -2344,11 +2432,32 @@ def unpack_selected_sdcard_pak() -> None:
         )
         _log_operation_event('menu_action_succeeded', operation='unpack', source=str(pak_file), output=str(output_dir))
     except Exception as exc:
+        error_text = f'{type(exc).__name__}: {exc}'
+        traceback_text = traceback.format_exc()
         _log_operation_event(
-            'menu_action_failed', operation='unpack', source=str(pak_file), output=str(output_dir),
-            error=f'{type(exc).__name__}: {exc}', traceback=traceback.format_exc(),
+            'menu_action_failed', operation='unpack', source=pak_file.name, output=output_dir.name,
+            error=error_text, traceback=traceback_text,
+        )
+        report = write_local_diagnostic(
+            'menu-unpack',
+            error_text,
+            1,
+            context={
+                'stage': 'open_parser_or_extract_entries',
+                'source_name': pak_file.name,
+                'source_exists': pak_file.exists(),
+                'source_size': pak_file.stat().st_size if pak_file.is_file() else 'unavailable',
+                'output_name': output_dir.name,
+                'output_exists': output_dir.exists(),
+                'output_file_count': sum(1 for item in output_dir.rglob('*') if item.is_file()) if output_dir.is_dir() else 0,
+                'workers': 4,
+                'traceback': traceback_text,
+            },
         )
         console.print(f"[bold {NEON['red']}]Unpack failed: {escape(str(exc))}[/bold {NEON['red']}]")
+        if report:
+            console.print(f"[bold {NEON['yellow']}]Diagnostic report: {report}[/bold {NEON['yellow']}]")
+        console.print(f"[bold {NEON['muted']}]Detailed stage events are in the local operation log.[/bold {NEON['muted']}]")
 
 
 def lua_inject_selected_sdcard_pak() -> None:

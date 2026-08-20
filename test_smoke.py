@@ -14,6 +14,7 @@ from paktool_support import ToolError, run_repak, sanitize_diagnostic_text, star
 
 ROOT = Path(__file__).resolve().parent
 TOOL = ROOT / "paktool_support.py"
+NATIVE_TOOL = ROOT / "paktool.py"
 source_text = TOOL.read_text(encoding="utf-8")
 assert "def backup_file" not in source_text
 assert "start_background_update" in source_text
@@ -130,13 +131,45 @@ with tempfile.TemporaryDirectory(prefix="paktool-local-diagnostic-test-") as dia
     env = os.environ.copy()
     env["XDG_STATE_HOME"] = diagnostic_tmp
     env["PAKTOOL_NO_AUTO_RETRY"] = "1"
-    failed = subprocess.run([sys.executable, str(TOOL), "unpack", "/sdcard/private/missing.pak"], check=False, capture_output=True, text=True, env=env)
+    failed = subprocess.run([sys.executable, str(NATIVE_TOOL), "unpack", "/sdcard/private/missing.pak"], check=False, capture_output=True, text=True, env=env)
     assert failed.returncode != 0
     reports = list((Path(diagnostic_tmp) / "paktool").glob("error-*.json"))
     assert reports
     report_data = json.loads(reports[0].read_text(encoding="utf-8"))
     assert report_data["command"] == "unpack"
     assert "PAK contents" in report_data["privacy"]
+    assert report_data["context"]["stage"] == "validate_source"
+    assert "error_type" in report_data["context"]
+    assert "Diagnostic report:" in failed.stderr
+
+with tempfile.TemporaryDirectory(prefix="paktool-corrupt-unpack-test-") as corrupt_tmp:
+    corrupt_root = Path(corrupt_tmp)
+    corrupt_pak = corrupt_root / "corrupt.pak"
+    corrupt_pak.write_bytes(b"not-a-valid-ue4-pak")
+    corrupt_output = corrupt_root / "unpacked"
+    env = os.environ.copy()
+    env["XDG_STATE_HOME"] = str(corrupt_root / "state")
+    env["PAKTOOL_NO_AUTO_RETRY"] = "1"
+    failed = subprocess.run(
+        [sys.executable, str(NATIVE_TOOL), "unpack", str(corrupt_pak), str(corrupt_output)],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert failed.returncode != 0
+    reports = list((corrupt_root / "state" / "paktool").glob("error-*.json"))
+    assert reports
+    corrupt_report = json.loads(reports[0].read_text(encoding="utf-8"))
+    assert corrupt_report["context"]["stage"] == "open_parser"
+    assert corrupt_report["context"]["error_type"] == "SystemExit"
+    assert "PAK format was not recognized" in corrupt_report["error"]
+    assert str(corrupt_root) not in json.dumps(corrupt_report)
+    operation_logs = list((corrupt_root / "state" / "paktool" / "logs").glob("operation-*.jsonl"))
+    assert operation_logs
+    operation_text = "\n".join(path.read_text(encoding="utf-8") for path in operation_logs)
+    assert "unpack_parser_attempt_failed" in operation_text
+    assert "unpack_parser_failed" in operation_text
 
 started = time.perf_counter()
 help_result = subprocess.run([sys.executable, str(TOOL), "--help"], check=True, capture_output=True, text=True)

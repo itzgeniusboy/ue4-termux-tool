@@ -401,6 +401,37 @@ def main() -> None:
         }
         assert (download_dir / "MODDED_base.pak").read_bytes() == b"verified-lua-pak"
 
+        diagnostic_state = menu_root / "state"
+        previous_state = os.environ.get("XDG_STATE_HOME")
+        os.environ["XDG_STATE_HOME"] = str(diagnostic_state)
+        try:
+            events.clear()
+            paktool_core.set_operation_log_callback(
+                lambda name, **fields: events.append((name, fields))
+            )
+            with patch.object(paktool_core, "PAKTOOL_ROOT_DIR", download_dir), patch.object(
+                paktool_core, "PAKTOOL_EDIT_DIR", edit_dir
+            ), patch.object(paktool_core, "PAKTOOL_UNPACKED_DIR", unpacked_dir), patch.object(
+                paktool_core, "select_pak_from_sdcard", return_value=source_pak
+            ), patch.object(
+                paktool_core, "TencentPakFile", side_effect=ValueError("bad index at /sdcard/private/base.pak")
+            ):
+                paktool_core.unpack_selected_sdcard_pak()
+        finally:
+            paktool_core.set_operation_log_callback(None)
+            if previous_state is None:
+                os.environ.pop("XDG_STATE_HOME", None)
+            else:
+                os.environ["XDG_STATE_HOME"] = previous_state
+        reports = list((diagnostic_state / "paktool").glob("error-*.json"))
+        assert reports
+        menu_report = json.loads(reports[0].read_text(encoding="utf-8"))
+        assert menu_report["command"] == "menu-unpack"
+        assert menu_report["context"]["stage"] == "open_parser_or_extract_entries"
+        assert menu_report["context"]["source_name"] == "base.pak"
+        assert "/sdcard/private/base.pak" not in json.dumps(menu_report)
+        assert any(name == "menu_action_failed" for name, _ in events)
+
     cli_source = (ROOT / "paktool.py").read_text(encoding="utf-8")
     assert "main_menu()" in cli_source
     assert "paktool_control_center()" not in cli_source[cli_source.index("def main("):]

@@ -40,6 +40,8 @@ try:
         repack_pak_file_patch,
         repack_pak_file_with_block_display,
         set_operation_log_callback,
+        write_local_diagnostic,
+        _log_operation_event,
     )
 except ImportError as exc:
     raise SystemExit(
@@ -413,13 +415,70 @@ def open_pak_auto(path: Path, requested_od: bool = False) -> tuple[TencentPakFil
     attempts: list[dict] = []
     modes = [True] if requested_od else [False, True]
     for is_od in modes:
+        _log_operation_event('unpack_parser_attempt', parser_mode='od' if is_od else 'standard')
         try:
             pak = TencentPakFile(path, is_od=is_od)
+            _log_operation_event(
+                'unpack_parser_opened',
+                parser_mode='od' if is_od else 'standard',
+                pak_version=getattr(pak._pak_info, 'version', None),
+                entries=sum(len(files) for files in pak._index.values()),
+            )
             return pak, is_od, attempts
         except Exception as exc:
-            attempts.append({"is_od": is_od, "error": f"{type(exc).__name__}: {exc}"})
+            attempt = {"is_od": is_od, "error": f"{type(exc).__name__}: {exc}"}
+            attempts.append(attempt)
+            _log_operation_event('unpack_parser_attempt_failed', **attempt)
     details = "; ".join(f"is_od={item['is_od']}: {item['error']}" for item in attempts)
+    _log_operation_event('unpack_parser_failed', attempts=len(attempts), details=details)
     raise SystemExit(f"PAK format was not recognized. Attempts: {details}")
+
+
+def _unpack_failure_context(args: argparse.Namespace, pak_path: Path | None, output: Path | None, stage: str, *, parser_mode: str | None = None, pak: TencentPakFile | None = None) -> dict[str, object]:
+    context: dict[str, object] = {
+        'stage': stage,
+        'requested_od': bool(getattr(args, 'is_od', False)),
+        'workers': getattr(args, 'workers', 4),
+        'decompile_lua': bool(getattr(args, 'decompile_lua', False)),
+        'source_name': pak_path.name if pak_path else '<unresolved>',
+        'source_exists': bool(pak_path and pak_path.exists()),
+        'source_is_file': bool(pak_path and pak_path.is_file()),
+        'output_name': output.name if output else '<unresolved>',
+        'output_exists': bool(output and output.exists()),
+        'output_file_count': 0,
+        'free_bytes': None,
+        'parser_mode': parser_mode or 'unavailable',
+        'pak_version': getattr(getattr(pak, '_pak_info', None), 'version', None),
+    }
+    if pak_path and pak_path.is_file():
+        try:
+            context['source_size'] = pak_path.stat().st_size
+        except OSError:
+            context['source_size'] = 'unavailable'
+    else:
+        context['source_size'] = 'unavailable'
+    if output:
+        try:
+            context['output_file_count'] = sum(1 for item in output.rglob('*') if item.is_file()) if output.is_dir() else 0
+            context['free_bytes'] = shutil.disk_usage(output.parent if output.parent.exists() else Path.cwd()).free
+        except OSError:
+            context['free_bytes'] = 'unavailable'
+    return context
+
+
+def _write_unpack_failure(args: argparse.Namespace, error: BaseException, *, pak_path: Path | None, output: Path | None, stage: str, parser_mode: str | None = None, pak: TencentPakFile | None = None) -> Path | None:
+    code = error.code if isinstance(error, SystemExit) and isinstance(error.code, int) else 1
+    context = _unpack_failure_context(args, pak_path, output, stage, parser_mode=parser_mode, pak=pak)
+    context['error_type'] = type(error).__name__
+    context['traceback'] = traceback.format_exc()
+    report = write_local_diagnostic('unpack', f'{type(error).__name__}: {error}', code, context=context)
+    _log_operation_event(
+        'unpack_diagnostic_created',
+        report=str(report) if report else 'unavailable',
+        stage=stage,
+        error_type=type(error).__name__,
+    )
+    return report
 
 
 def capability_payload(path: Path, pak: TencentPakFile, is_od: bool) -> dict:
@@ -971,28 +1030,74 @@ def auto_command(args: argparse.Namespace) -> None:
 
 
 def unpack_command(args: argparse.Namespace) -> None:
-    pak_path = require_file(args.pak, "PAK")
-    output = Path(args.output).expanduser() if args.output else pak_path.with_name(pak_path.stem + "-unpacked")
-    if output.exists() and not output.is_dir():
-        raise SystemExit(f"Output path exists as a file: {output}")
-    if output.exists() and any(output.iterdir()) and not args.overwrite:
-        raise SystemExit(f"Output directory is not empty: {output}. Use --overwrite only after keeping a backup.")
-    pak, _, _ = open_pak_auto(pak_path, args.is_od)
-    pak.dump(output, workers=getattr(args, "workers", 4))
-    decompile_result = None
-    if getattr(args, "decompile_lua", False):
-        decompile_result = decompile_extracted_lua(output)
-    log_path = output / f"Debug_{pak_path.stem}.log"
-    dump_unpacking_log(pak, log_path)
-    print(f"Extracted to: {output}")
-    print(f"Debug log: {log_path}")
-    print(f"Manifest: {create_manifest(output)}")
-    if decompile_result is not None:
-        print(
-            "Lua decompilation: "
-            f"{decompile_result['decompiled']} succeeded, "
-            f"{decompile_result['fallback']} kept as raw .luac"
+    pak_path: Path | None = None
+    output: Path | None = None
+    pak: TencentPakFile | None = None
+    parser_mode: str | None = None
+    stage = "validate_source"
+
+    def record_failure(error: BaseException) -> None:
+        report = _write_unpack_failure(
+            args,
+            error,
+            pak_path=pak_path,
+            output=output,
+            stage=stage,
+            parser_mode=parser_mode,
+            pak=pak,
         )
+        print(f"Unpack failed during {stage}: {type(error).__name__}: {error}", file=sys.stderr)
+        if report:
+            print(f"Diagnostic report: {report}", file=sys.stderr)
+        print("Operation log contains the full sanitized stage timeline.", file=sys.stderr)
+
+    try:
+        pak_path = require_file(args.pak, "PAK")
+        stage = "validate_output"
+        output = Path(args.output).expanduser() if args.output else pak_path.with_name(pak_path.stem + "-unpacked")
+        if output.exists() and not output.is_dir():
+            raise SystemExit(f"Output path exists as a file: {output}")
+        if output.exists() and any(output.iterdir()) and not args.overwrite:
+            raise SystemExit(f"Output directory is not empty: {output}. Use --overwrite only after keeping a backup.")
+
+        stage = "open_parser"
+        pak, is_od, _ = open_pak_auto(pak_path, args.is_od)
+        parser_mode = "od" if is_od else "standard"
+        stage = "extract_entries"
+        _log_operation_event(
+            "unpack_stage_started",
+            stage=stage,
+            source_name=pak_path.name,
+            output_name=output.name,
+            workers=getattr(args, "workers", 4),
+        )
+        pak.dump(output, workers=getattr(args, "workers", 4))
+
+        decompile_result = None
+        if getattr(args, "decompile_lua", False):
+            stage = "decompile_lua"
+            decompile_result = decompile_extracted_lua(output)
+
+        stage = "write_debug_log"
+        log_path = output / f"Debug_{pak_path.stem}.log"
+        dump_unpacking_log(pak, log_path)
+        stage = "write_manifest"
+        manifest_path = create_manifest(output)
+        print(f"Extracted to: {output}")
+        print(f"Debug log: {log_path}")
+        print(f"Manifest: {manifest_path}")
+        if decompile_result is not None:
+            print(
+                "Lua decompilation: "
+                f"{decompile_result['decompiled']} succeeded, "
+                f"{decompile_result['fallback']} kept as raw .luac"
+            )
+    except SystemExit as exc:
+        record_failure(exc)
+        raise
+    except Exception as exc:
+        record_failure(exc)
+        raise
 
 
 def batch_command(args: argparse.Namespace) -> None:
