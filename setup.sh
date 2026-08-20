@@ -30,8 +30,35 @@ if [ -d "$PROJECT/.git" ]; then
   printf '%s\n' "[4/5] Updating existing tool files..."
   git -C "$PROJECT" pull --ff-only || fail "Existing folder has local changes or cannot reach GitHub."
 else
-  printf '%s\n' "[4/5] Downloading public repository..."
-  git clone "$REPO" "$PROJECT" || fail "Could not download the public repository."
+  printf '%s\n' "[4/5] Downloading required files (sparse)..."
+  git clone --filter=blob:none --sparse --depth 1 "$REPO" "$PROJECT" \
+    || fail "Could not download the public repository."
+
+  sparse_paths=(
+    "/.ue4-bug-relay"
+    "/PAK/"
+    "/PAK TOOL/"
+    "/REPACK/"
+    "/RESULT/"
+    "/UNPACK/"
+    "/PAKFORGE_SDCARD_MENU_SNIPPET.md"
+    "/PERFORMANCE.md"
+    "/README.md"
+    "/REFERENCE_REVIEW.md"
+    "/bootstrap.sh"
+    "/install-termux.sh"
+    "/pakforge.py"
+    "/pakforge_core.py"
+    "/pakforge_first_run.py"
+    "/pakforge_setup.py"
+    "/setup.sh"
+    "/test_launcher.sh"
+    "/ue4tool.py"
+    "/update-termux.sh"
+  )
+  if ! git -C "$PROJECT" sparse-checkout set --no-cone "${sparse_paths[@]}"; then
+    fail "Could not configure the sparse repository checkout."
+  fi
 fi
 
 cd "$PROJECT"
