@@ -112,26 +112,30 @@ else:
     assert "Script/MyMod/init.lua" in text
     assert "Script/MyMod/player.lua" in text
 
-with tempfile.TemporaryDirectory(prefix="tool-empty-repak-test-") as empty_repak_tmp:
-    empty_repak = Path(empty_repak_tmp) / "repak"
-    empty_repak.write_text("#!/bin/sh\\nexit 1\\n", encoding="utf-8")
-    empty_repak.chmod(0o755)
-    mocked_results = [
-        subprocess.CompletedProcess([str(empty_repak)], 1, stdout="", stderr=""),
-        subprocess.CompletedProcess([str(empty_repak), "--version"], 0, stdout="repak 1.0\\n", stderr=""),
-    ]
-    with patch("ue4tool.subprocess.run", side_effect=mocked_results) as mocked_run:
-        try:
-            run_repak(str(empty_repak), None, ["unpack", "input.pak"])
-        except ToolError as exc:
-            empty_failure = str(exc)
-        else:
-            raise AssertionError("run_repak should fail for a non-zero empty-output result")
-    assert "repak --version: repak 1.0" in empty_failure
-    assert "repak produced no output — this usually means" in empty_failure
-    assert "Try: repak --version to confirm the binary works" in empty_failure
-    assert mocked_run.call_args_list[1].kwargs["timeout"] == 5
-    assert "/tmp/" not in sanitize_diagnostic_text(empty_failure)
+def test_repak_empty_output_failure_diagnostic() -> None:
+    with tempfile.TemporaryDirectory(prefix="tool-empty-repak-test-") as empty_repak_tmp:
+        empty_repak = Path(empty_repak_tmp) / "repak"
+        empty_repak.write_text("#!/bin/sh\\nexit 1\\n", encoding="utf-8")
+        empty_repak.chmod(0o755)
+        mocked_results = [
+            subprocess.CompletedProcess([str(empty_repak)], 1, stdout="", stderr=""),
+            subprocess.CompletedProcess([str(empty_repak), "--version"], 0, stdout="repak 1.0\\n", stderr=""),
+        ]
+        with patch("ue4tool.subprocess.run", side_effect=mocked_results) as mocked_run:
+            try:
+                run_repak(str(empty_repak), None, ["unpack", "input.pak"])
+            except ToolError as exc:
+                empty_failure = str(exc)
+            else:
+                raise AssertionError("run_repak should fail for a non-zero empty-output result")
+        assert "repak --version: repak 1.0" in empty_failure
+        assert "repak produced no output — this usually means" in empty_failure
+        assert "Try: repak --version to confirm the binary works" in empty_failure
+        assert mocked_run.call_args_list[1].kwargs["timeout"] == 5
+        assert "/tmp/" not in sanitize_diagnostic_text(empty_failure)
+
+
+test_repak_empty_output_failure_diagnostic()
 
 with tempfile.TemporaryDirectory(prefix="tool-report-test-") as report_tmp:
     report_env = os.environ.copy()
