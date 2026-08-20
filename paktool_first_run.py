@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Dependency-light first-run screen for PakForge."""
+"""Dependency-light first-run screen for Paktool."""
 from __future__ import annotations
 
 import json
@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "pakforge"
+STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "paktool"
 STATUS_FILE = STATE_DIR / "setup-status.json"
 LOG_FILE = STATE_DIR / "setup.log"
 SPINNER = "|/-\\"
@@ -80,7 +80,7 @@ def show_status(status: dict, tick: int = 0) -> None:
     updated_at = status.get("updated_at", status.get("updated", "calculating"))
     heartbeat = status.get("heartbeat_count", tick)
     spinner = SPINNER[tick % len(SPINNER)]
-    plain = os.environ.get("PAKFORGE_PLAIN") == "1" or os.environ.get("NO_COLOR") == "1"
+    plain = os.environ.get("PAKTOOL_PLAIN") == "1" or os.environ.get("NO_COLOR") == "1"
     if plain:
         clear = ""
         accent = ""
@@ -89,9 +89,9 @@ def show_status(status: dict, tick: int = 0) -> None:
         clear = "\033[H\033[J"
         accent = "\033[1;36m"
         reset = "\033[0m"
-    print(f"{clear}PakForge Launcher — OPEN")
+    print(f"{clear}Paktool Launcher — OPEN")
     print("========================")
-    print("Full PakForge menu is preparing automatically; no second command is needed.")
+    print("Full Paktool menu is preparing automatically; no second command is needed.")
     print(f"{spinner} {percent:3d}% stage estimate  |  {remaining:3d}% remaining")
     print(f"{progress_bar(percent)}  {percent:3d}%")
     print(f"{accent}Stage {stage_index}/{stage_total}:{reset} {stage}")
@@ -129,11 +129,11 @@ def read_key(timeout: float = 0.5) -> str | None:
 
 def main(argv: list[str]) -> int:
     if "--script" not in argv:
-        print("Setup is still running. Check: pakforge setup-status")
+        print("Setup is still running. Check: paktool setup-status")
         return 2
     script_index = argv.index("--script")
     if script_index + 1 >= len(argv):
-        print("First-run screen requires a PakForge script path.", file=sys.stderr)
+        print("First-run screen requires a Paktool script path.", file=sys.stderr)
         return 2
     script = Path(argv[script_index + 1]).resolve()
     original_args = argv[script_index + 2:]
@@ -145,7 +145,7 @@ def main(argv: list[str]) -> int:
         show_status(status, tick)
         choice = read_key(0.5)
         if choice == "q":
-            print("\nPakForge setup continues in the background. Exiting screen.")
+            print("\nPaktool setup continues in the background. Exiting screen.")
             return 2
         if choice == "s":
             print(json.dumps(read_status(), indent=2))

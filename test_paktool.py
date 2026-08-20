@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fast tests for PakForge's wrapper workflows without requiring a real PAK file."""
+"""Fast tests for Paktool's wrapper workflows without requiring a real PAK file."""
 from __future__ import annotations
 
 import argparse
@@ -15,21 +15,21 @@ from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
-import pakforge
-import pakforge_core
-from pakforge_core import (
+import paktool
+import paktool_core
+from paktool_core import (
     TencentPakFile,
     calculate_tencent_hashes,
     validate_encryption_metadata,
 )
 
 ROOT = Path(__file__).resolve().parent
-PAKFORGE = ROOT / "pakforge.py"
+PAKTOOL = ROOT / "paktool.py"
 
 
 def run(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, str(PAKFORGE), *args],
+        [sys.executable, str(PAKTOOL), *args],
         cwd=ROOT,
         text=True,
         capture_output=True,
@@ -38,30 +38,30 @@ def run(*args: str) -> subprocess.CompletedProcess[str]:
 
 
 def main() -> None:
-    assert pakforge.normalize_target_prefix("Content\\\\Lua\\\\Mods") == "Content/Lua/Mods"
-    assert pakforge.normalize_target_prefix("/Content/Lua/Mods/") == "Content/Lua/Mods"
+    assert paktool.normalize_target_prefix("Content\\\\Lua\\\\Mods") == "Content/Lua/Mods"
+    assert paktool.normalize_target_prefix("/Content/Lua/Mods/") == "Content/Lua/Mods"
     try:
-        pakforge.normalize_target_prefix("Content/../Config")
+        paktool.normalize_target_prefix("Content/../Config")
     except SystemExit:
         pass
     else:
         raise AssertionError("path traversal was accepted")
 
-    parsed = pakforge.parser().parse_args([
+    parsed = paktool.parser().parse_args([
         "repack", "source.pak", "edited", "output.pak", "--target-prefix", "Content/Lua", "--verify"
     ])
     assert parsed.target_prefix == "Content/Lua"
     assert parsed.verify is True
     assert parsed.workers == 4
-    unpack_parsed = pakforge.parser().parse_args(["unpack", "source.pak", "out", "--workers", "2"])
+    unpack_parsed = paktool.parser().parse_args(["unpack", "source.pak", "out", "--workers", "2"])
     assert unpack_parsed.workers == 2
-    repack_parsed = pakforge.parser().parse_args(["repack", "source.pak", "edited", "out.pak", "--workers", "3"])
+    repack_parsed = paktool.parser().parse_args(["repack", "source.pak", "edited", "out.pak", "--workers", "3"])
     assert repack_parsed.workers == 3
-    with tempfile.TemporaryDirectory(prefix="pakforge-setup-status-") as setup_state:
+    with tempfile.TemporaryDirectory(prefix="paktool-setup-status-") as setup_state:
         setup_env = os.environ.copy()
         setup_env["XDG_STATE_HOME"] = setup_state
         setup_status = subprocess.run(
-            [sys.executable, str(ROOT / "pakforge_setup.py"), "--status"],
+            [sys.executable, str(ROOT / "paktool_setup.py"), "--status"],
             cwd=ROOT,
             env=setup_env,
             text=True,
@@ -78,11 +78,11 @@ def main() -> None:
         assert setup_payload["updated_at"] is None
         assert setup_payload["downloaded_bytes"] is None
         assert setup_payload["download_total_bytes"] is None
-    patch_parsed = pakforge.parser().parse_args(["repack", "source.pak", "edited", "out.pak", "--patch", "--verify"])
+    patch_parsed = paktool.parser().parse_args(["repack", "source.pak", "edited", "out.pak", "--patch", "--verify"])
     assert patch_parsed.patch is True
     assert patch_parsed.verify is True
 
-    with tempfile.TemporaryDirectory(prefix="pakforge-patch-") as patch_dir:
+    with tempfile.TemporaryDirectory(prefix="paktool-patch-") as patch_dir:
         patch_root = Path(patch_dir)
         source_pak = patch_root / "source.pak"
         edited_root = patch_root / "edited"
@@ -97,7 +97,7 @@ def main() -> None:
             offset=6,
             size=len(original),
             uncompressed_size=len(original),
-            compression_method=pakforge_core.CM_NONE,
+            compression_method=paktool_core.CM_NONE,
             compressed_blocks=[],
             compression_block_size=0,
             encrypted=False,
@@ -106,19 +106,19 @@ def main() -> None:
         )
         fake_pak = SimpleNamespace(
             _file_path=source_pak,
-            _index={pakforge_core.PurePath("Content"): {"x.bin": entry}},
+            _index={paktool_core.PurePath("Content"): {"x.bin": entry}},
             _zstd_dict=None,
         )
-        assert pakforge_core.repack_pak_file_patch(fake_pak, edited_root, output_pak, workers=2) == 1
+        assert paktool_core.repack_pak_file_patch(fake_pak, edited_root, output_pak, workers=2) == 1
         patched_bytes = output_pak.read_bytes()
         assert len(patched_bytes) == len(source_bytes)
         assert patched_bytes[:6] == source_bytes[:6]
         assert patched_bytes[6:14] == replacement
         assert patched_bytes[14:] == source_bytes[14:]
-    assert pakforge_core.CM_OODLE == 3
-    with patch.object(pakforge_core.OodleCodec, "available", return_value=False):
-        assert pakforge_core.effective_repack_compression_method(pakforge_core.CM_OODLE) == pakforge_core.CM_ZSTD
-    auto_parsed = pakforge.parser().parse_args([
+    assert paktool_core.CM_OODLE == 3
+    with patch.object(paktool_core.OodleCodec, "available", return_value=False):
+        assert paktool_core.effective_repack_compression_method(paktool_core.CM_OODLE) == paktool_core.CM_ZSTD
+    auto_parsed = paktool.parser().parse_args([
         "auto", "--pak", "source.pak", "--edit-dir", "edits", "--output", "out.pak",
         "--target-prefix", "Content/Lua", "--workers", "2",
     ])
@@ -126,7 +126,7 @@ def main() -> None:
     assert auto_parsed.target_prefix == "Content/Lua"
     assert auto_parsed.workers == 2
 
-    with tempfile.TemporaryDirectory(prefix="pakforge-workers-") as staging_dir:
+    with tempfile.TemporaryDirectory(prefix="paktool-workers-") as staging_dir:
         root = Path(staging_dir)
         first = root / "first.bin"
         second = root / "second.bin"
@@ -136,17 +136,17 @@ def main() -> None:
             "Content/first.bin": (first, None),
             "Content/second.bin": (second, None),
         }
-        staged = pakforge_core._stage_repack_inputs(edited_inputs, workers=2)
+        staged = paktool_core._stage_repack_inputs(edited_inputs, workers=2)
         assert list(staged) == list(edited_inputs)
         assert staged["Content/first.bin"] == b"first-data"
         assert staged["Content/second.bin"] == b"second-data"
         with patch.object(
-            pakforge_core, "ThreadPoolExecutor", side_effect=RuntimeError("threads unavailable")
+            paktool_core, "ThreadPoolExecutor", side_effect=RuntimeError("threads unavailable")
         ):
-            fallback = pakforge_core._stage_repack_inputs(edited_inputs, workers=4)
+            fallback = paktool_core._stage_repack_inputs(edited_inputs, workers=4)
         assert fallback == staged
 
-    raw = b"offline-pakforge-fixture"
+    raw = b"offline-paktool-fixture"
     hashes = calculate_tencent_hashes(raw, r"Content\Lua\MyMod.lua", 12)
     assert hashes["content_hash"] == hashlib.sha1(raw).digest()
     assert hashes["content_org_hash"] == hashlib.sha1(raw).digest()
@@ -161,7 +161,7 @@ def main() -> None:
     else:
         raise AssertionError("unknown encrypted-entry method was accepted")
 
-    with tempfile.TemporaryDirectory(prefix="pakforge-luac-") as compiler_dir:
+    with tempfile.TemporaryDirectory(prefix="paktool-luac-") as compiler_dir:
         compiler_root = Path(compiler_dir)
         for name in ("luac", "luac51", "luac5.1"):
             path = compiler_root / name
@@ -170,33 +170,33 @@ def main() -> None:
         previous_path = os.environ.get("PATH", "")
         os.environ["PATH"] = f"{compiler_root}:{previous_path}"
         try:
-            assert Path(pakforge.find_lua51_compiler()).name == "luac5.1"
+            assert Path(paktool.find_lua51_compiler()).name == "luac5.1"
         finally:
             os.environ["PATH"] = previous_path
 
-    with tempfile.TemporaryDirectory(prefix="pakforge-luac-install-") as compiler_dir:
+    with tempfile.TemporaryDirectory(prefix="paktool-luac-install-") as compiler_dir:
         expected_compiler = str(Path(compiler_dir) / "luac5.1")
         with patch.object(
-            pakforge,
+            paktool,
             "_find_lua51_compiler",
             side_effect=[None, expected_compiler],
         ), patch.object(
-            pakforge.shutil,
+            paktool.shutil,
             "which",
             side_effect=lambda name: "/data/data/com.termux/files/usr/bin/pkg" if name == "pkg" else None,
         ), patch.object(
-            pakforge.subprocess,
+            paktool.subprocess,
             "run",
             return_value=subprocess.CompletedProcess(["pkg"], 0),
         ) as package_run:
-            assert pakforge.ensure_lua51_installed() == expected_compiler
+            assert paktool.ensure_lua51_installed() == expected_compiler
             package_run.assert_called_once_with(["pkg", "install", "lua51", "-y"], check=False)
 
     for manager, expected_command in (
         ("apt", ["/usr/bin/sudo", "apt", "install", "lua5.1", "-y"]),
         ("pacman", ["/usr/bin/sudo", "pacman", "-S", "lua51", "--noconfirm"]),
     ):
-        with tempfile.TemporaryDirectory(prefix=f"pakforge-{manager}-") as compiler_dir:
+        with tempfile.TemporaryDirectory(prefix=f"paktool-{manager}-") as compiler_dir:
             expected_compiler = str(Path(compiler_dir) / "luac5.1")
             def fake_which(name: str, selected: str = manager) -> str | None:
                 if name == selected:
@@ -205,63 +205,63 @@ def main() -> None:
                     return "/usr/bin/sudo"
                 return None
             with patch.object(
-                pakforge,
+                paktool,
                 "_find_lua51_compiler",
                 side_effect=[None, expected_compiler],
-            ), patch.object(pakforge.shutil, "which", side_effect=fake_which), patch.object(
-                pakforge.os, "geteuid", return_value=1000
+            ), patch.object(paktool.shutil, "which", side_effect=fake_which), patch.object(
+                paktool.os, "geteuid", return_value=1000
             ), patch.object(
-                pakforge.subprocess,
+                paktool.subprocess,
                 "run",
                 return_value=subprocess.CompletedProcess(expected_command, 0),
             ) as package_run:
-                assert pakforge.ensure_lua51_installed() == expected_compiler
+                assert paktool.ensure_lua51_installed() == expected_compiler
                 package_run.assert_called_once_with(expected_command, check=False)
 
-    with patch.object(pakforge, "_find_lua51_compiler", return_value=None), patch.object(
-        pakforge.shutil, "which", return_value=None
+    with patch.object(paktool, "_find_lua51_compiler", return_value=None), patch.object(
+        paktool.shutil, "which", return_value=None
     ):
         try:
-            pakforge.ensure_lua51_installed()
+            paktool.ensure_lua51_installed()
         except SystemExit as exc:
             assert exc.code == 2
         else:
             raise AssertionError("unknown package-manager host did not fail gracefully")
 
     plain = bytes(range(40))
-    assert pakforge.normalize_tencent_lua_bytecode(plain[:33] + b"\x02" + plain[34:]) == plain[:33] + b"\x02" + plain[34:]
+    assert paktool.normalize_tencent_lua_bytecode(plain[:33] + b"\x02" + plain[34:]) == plain[:33] + b"\x02" + plain[34:]
     obfuscated = plain[:33] + b"\x03" + bytes((0xA5, 0x10, 0xF2))
-    assert pakforge.normalize_tencent_lua_bytecode(obfuscated) == plain[:33] + b"\x03" + bytes((0x5A, 0x01, 0x2F))
+    assert paktool.normalize_tencent_lua_bytecode(obfuscated) == plain[:33] + b"\x03" + bytes((0x5A, 0x01, 0x2F))
 
-    with tempfile.TemporaryDirectory(prefix="pakforge-unluac-") as decomp_root:
+    with tempfile.TemporaryDirectory(prefix="paktool-unluac-") as decomp_root:
         root = Path(decomp_root)
         luac = root / "Content" / "Lua" / "demo.luac"
         luac.parent.mkdir(parents=True)
         luac.write_bytes(obfuscated)
         jar = root / "unluac_patched.jar"
         jar.write_bytes(b"test jar placeholder")
-        with patch.object(pakforge.shutil, "which", return_value="/usr/bin/java") as java_which, patch.object(
-            pakforge.subprocess,
+        with patch.object(paktool.shutil, "which", return_value="/usr/bin/java") as java_which, patch.object(
+            paktool.subprocess,
             "run",
         ) as java_run:
             def fake_java(command, **kwargs):
                 assert command[:3] == ["java", "-jar", str(jar)]
-                assert Path(command[3]).read_bytes() == pakforge.normalize_tencent_lua_bytecode(obfuscated)
+                assert Path(command[3]).read_bytes() == paktool.normalize_tencent_lua_bytecode(obfuscated)
                 kwargs["stdout"].write("-- decompiled source\n")
                 return subprocess.CompletedProcess(command, 0, stderr="")
             java_run.side_effect = fake_java
-            ok, output_path = pakforge._decompile_luac_file(luac, jar)
+            ok, output_path = paktool._decompile_luac_file(luac, jar)
             assert ok is True
             assert Path(output_path).read_text(encoding="utf-8") == "-- decompiled source\n"
             assert luac.read_bytes() == obfuscated
             java_which.assert_called_once_with("java")
 
-        with patch.object(pakforge, "find_unluac_decompiler", return_value=None):
-            result = pakforge.decompile_extracted_lua(root)
+        with patch.object(paktool, "find_unluac_decompiler", return_value=None):
+            result = paktool.decompile_extracted_lua(root)
             assert result == {"found": 1, "decompiled": 0, "fallback": 1}
             assert luac.is_file()
 
-    with tempfile.TemporaryDirectory(prefix="pakforge-auto-test-") as auto_dir:
+    with tempfile.TemporaryDirectory(prefix="paktool-auto-test-") as auto_dir:
         root = Path(auto_dir)
         source_pak = root / "base.pak"
         source_pak.write_bytes(b"test-pak")
@@ -290,20 +290,20 @@ def main() -> None:
             output_path.write_bytes(b"verified-pak")
             return 1
 
-        with patch.object(pakforge, "unpack_command", side_effect=fake_unpack), patch.object(
-            pakforge, "decompile_extracted_lua", return_value={"found": 1, "decompiled": 1, "fallback": 0}
+        with patch.object(paktool, "unpack_command", side_effect=fake_unpack), patch.object(
+            paktool, "decompile_extracted_lua", return_value={"found": 1, "decompiled": 1, "fallback": 0}
         ), patch.object(
-            pakforge, "ensure_lua51_installed", return_value="/usr/bin/luac5.1"
+            paktool, "ensure_lua51_installed", return_value="/usr/bin/luac5.1"
         ), patch.object(
-            pakforge, "compile_lua_sources", side_effect=fake_compile
+            paktool, "compile_lua_sources", side_effect=fake_compile
         ), patch.object(
-            pakforge, "repack_pak_file_full", side_effect=fake_repack
+            paktool, "repack_pak_file_full", side_effect=fake_repack
         ), patch.object(
-            pakforge, "open_pak_auto", side_effect=[(fake_pak, False, None), (fake_pak, False, None)]
+            paktool, "open_pak_auto", side_effect=[(fake_pak, False, None), (fake_pak, False, None)]
         ), patch.object(
-            pakforge, "inventory", return_value=[{"path": "Content/Lua/Mods/ui.luac"}]
+            paktool, "inventory", return_value=[{"path": "Content/Lua/Mods/ui.luac"}]
         ):
-            pakforge.auto_command(
+            paktool.auto_command(
                 argparse.Namespace(
                     pak=str(source_pak), edit_dir=str(edit_dir.parent), output=str(output),
                     target_prefix="Content/Lua", report=str(report_path), workers=2,
@@ -316,15 +316,21 @@ def main() -> None:
         assert auto_report["replaced_files"][0]["pak_path"] == "Content/Lua/Mods/ui.luac"
         assert output.read_bytes() == b"verified-pak"
 
-    with tempfile.TemporaryDirectory(prefix="pakforge-menu-lua-") as menu_root:
+    with tempfile.TemporaryDirectory(prefix="paktool-menu-lua-") as menu_root:
         menu_root = Path(menu_root)
         download_dir = menu_root / "Download"
         edit_dir = download_dir / "EDIT"
         unpacked_dir = download_dir / "UNPACKED"
-        with patch.object(pakforge_core, "SDCARD_DOWNLOAD_DIR", download_dir), patch.object(
-            pakforge_core, "SDCARD_EDIT_DIR", edit_dir
-        ), patch.object(pakforge_core, "SDCARD_UNPACKED_DIR", unpacked_dir):
-            assert pakforge_core.ensure_sdcard_directories()
+        with patch.object(paktool_core, "PAKTOOL_ROOT_DIR", download_dir), patch.object(
+            paktool_core, "SDCARD_ROOT_DIR", download_dir
+        ), patch.object(paktool_core, "SDCARD_PAK_DIR", download_dir), patch.object(
+            paktool_core, "PAKTOOL_EDIT_DIR", edit_dir
+        ), patch.object(paktool_core, "PAKTOOL_UNPACKED_DIR", unpacked_dir), patch.object(
+            paktool_core, "SDCARD_EDIT_DIR", edit_dir
+        ), patch.object(paktool_core, "SDCARD_UNPACKED_DIR", unpacked_dir), patch.object(
+            paktool_core, "SDCARD_MODDED_DIR", download_dir
+        ):
+            assert paktool_core.ensure_sdcard_directories()
             assert download_dir.is_dir()
             assert edit_dir.is_dir()
             assert unpacked_dir.is_dir()
@@ -335,8 +341,8 @@ def main() -> None:
         (edit_dir / "Mods" / "one.lua").write_text("return 1\\n", encoding="utf-8")
         (edit_dir / "Mods" / "two.luac").write_bytes(b"lua51")
         (edit_dir / "Mods" / "ignore.txt").write_text("not lua", encoding="utf-8")
-        assert pakforge_core._directory_has_files(edit_dir)
-        assert not pakforge_core._directory_has_files(download_dir / "empty")
+        assert paktool_core._directory_has_files(edit_dir)
+        assert not paktool_core._directory_has_files(download_dir / "empty")
         calls = {}
 
         def fake_menu_pak(path):
@@ -362,24 +368,28 @@ def main() -> None:
             return len(calls["files"])
 
         events = []
-        pakforge_core.set_operation_log_callback(
+        paktool_core.set_operation_log_callback(
             lambda name, **fields: events.append((name, fields))
         )
         try:
-            with patch.object(pakforge_core, "SDCARD_DOWNLOAD_DIR", download_dir), patch.object(
-                pakforge_core, "SDCARD_EDIT_DIR", edit_dir
+            with patch.object(paktool_core, "PAKTOOL_ROOT_DIR", download_dir), patch.object(
+                paktool_core, "SDCARD_ROOT_DIR", download_dir
+            ), patch.object(paktool_core, "SDCARD_PAK_DIR", download_dir), patch.object(
+                paktool_core, "PAKTOOL_EDIT_DIR", edit_dir
+            ), patch.object(paktool_core, "SDCARD_MODDED_DIR", download_dir), patch.object(
+                paktool_core, "SDCARD_EDIT_DIR", edit_dir
             ), patch.object(
-                pakforge_core, "select_pak_from_sdcard", return_value=source_pak
+                paktool_core, "select_pak_from_sdcard", return_value=source_pak
             ), patch.object(
-                pakforge_core, "safe_input", return_value=""
+                paktool_core, "safe_input", return_value=""
             ), patch.object(
-                pakforge_core, "TencentPakFile", side_effect=fake_menu_pak
+                paktool_core, "TencentPakFile", side_effect=fake_menu_pak
             ), patch.object(
-                pakforge_core, "repack_pak_file_full", side_effect=fake_menu_repack
+                paktool_core, "repack_pak_file_full", side_effect=fake_menu_repack
             ):
-                pakforge_core.lua_inject_selected_sdcard_pak()
+                paktool_core.lua_inject_selected_sdcard_pak()
         finally:
-            pakforge_core.set_operation_log_callback(None)
+            paktool_core.set_operation_log_callback(None)
 
         assert [name for name, _ in events] == [
             'menu_action_started', 'menu_action_succeeded'
@@ -391,17 +401,17 @@ def main() -> None:
         }
         assert (download_dir / "MODDED_base.pak").read_bytes() == b"verified-lua-pak"
 
-    cli_source = (ROOT / "pakforge.py").read_text(encoding="utf-8")
+    cli_source = (ROOT / "paktool.py").read_text(encoding="utf-8")
     assert "main_menu()" in cli_source
-    assert "pakforge_control_center()" not in cli_source[cli_source.index("def main("):]
+    assert "paktool_control_center()" not in cli_source[cli_source.index("def main("):]
     assert "def _menu_select_pak" in cli_source
     assert "def _menu_workspace" in cli_source
     assert "_menu_path" not in cli_source
 
-    core_source = (ROOT / "pakforge_core.py").read_text(encoding="utf-8")
-    assert 'SDCARD_DOWNLOAD_DIR = Path("/sdcard/Download")' in core_source
-    assert 'SDCARD_EDIT_DIR = SDCARD_DOWNLOAD_DIR / "EDIT"' in core_source
-    assert 'SDCARD_UNPACKED_DIR = SDCARD_DOWNLOAD_DIR / "UNPACKED"' in core_source
+    core_source = (ROOT / "paktool_core.py").read_text(encoding="utf-8")
+    assert 'PAKTOOL_ROOT_DIR = Path("/sdcard/Paktool")' in core_source
+    assert 'PAKTOOL_EDIT_DIR = PAKTOOL_ROOT_DIR / "EDIT"' in core_source
+    assert 'PAKTOOL_UNPACKED_DIR = PAKTOOL_ROOT_DIR / "UNPACKED"' in core_source
     assert "def get_pak_files_from_sdcard()" in core_source
     assert "def select_pak_from_sdcard(" in core_source
     assert "def unpack_selected_sdcard_pak()" in core_source
@@ -409,9 +419,9 @@ def main() -> None:
     assert "def lua_inject_selected_sdcard_pak()" in core_source
     assert "def _directory_has_files" in core_source
     assert "def ensure_sdcard_directories" in core_source
-    assert "No .pak files found in /sdcard/Download/. Please copy your PAK file there." in core_source
-    assert "EDIT folder is empty. Place your modified files in /sdcard/Download/EDIT/ first." in core_source
-    assert 'output_pak = SDCARD_DOWNLOAD_DIR / f"MODDED_{pak_file.name}"' in core_source
+    assert "No .pak files found in /sdcard/Paktool/PAK/. Please copy your PAK file there." in core_source
+    assert "EDIT folder is empty. Place your modified files in /sdcard/Paktool/EDIT/ first." in core_source
+    assert 'output_pak = SDCARD_MODDED_DIR / f"MODDED_{pak_file.name}"' in core_source
     core_menu = core_source[core_source.index("def main_menu():"):]
     assert 'UNPACK PAK' in core_menu
     assert 'REPACK PAK (Full)' in core_menu
@@ -425,24 +435,24 @@ def main() -> None:
     assert 'data_path / "PAK"' not in core_menu
     assert 'data_path / "RESULT"' not in core_menu
 
-    assert pakforge_core._safe_index_parts('Content/Lua') == ('Content', 'Lua')
+    assert paktool_core._safe_index_parts('Content/Lua') == ('Content', 'Lua')
     for unsafe in ('../escape', '/absolute', 'C:/absolute', 'Content/../Lua', 'Content//Lua'):
         try:
-            pakforge_core._safe_index_parts(unsafe)
+            paktool_core._safe_index_parts(unsafe)
         except ValueError:
             pass
         else:
             raise AssertionError(f'unsafe index path accepted: {unsafe}')
-    assert pakforge_core._safe_menu_target('', 'Content/Lua/Mods') == 'Content/Lua/Mods'
+    assert paktool_core._safe_menu_target('', 'Content/Lua/Mods') == 'Content/Lua/Mods'
     for unsafe in ('../escape', '/absolute', 'C:/absolute', 'Content/../Lua'):
         try:
-            pakforge_core._safe_menu_target(unsafe, 'Content/Lua/Mods')
+            paktool_core._safe_menu_target(unsafe, 'Content/Lua/Mods')
         except ValueError:
             pass
         else:
             raise AssertionError(f'unsafe menu target accepted: {unsafe}')
 
-    with tempfile.TemporaryDirectory(prefix="pakforge-luac-test-") as raw:
+    with tempfile.TemporaryDirectory(prefix="paktool-luac-test-") as raw:
         root = Path(raw)
         lua_root = root / 'lua'
         source = lua_root / 'Mods' / 'ui.lua'
@@ -453,8 +463,8 @@ def main() -> None:
             Path(command[2]).write_bytes(b'lua51-bytecode')
             return SimpleNamespace(returncode=0, stdout='', stderr='')
 
-        with patch.object(pakforge.subprocess, 'run', side_effect=fake_luac):
-            compiled_root, _ = pakforge.compile_lua_sources(
+        with patch.object(paktool.subprocess, 'run', side_effect=fake_luac):
+            compiled_root, _ = paktool.compile_lua_sources(
                 lua_root, [source], root / 'staging', compiler='/usr/bin/luac5.1'
             )
         assert (compiled_root / 'Mods' / 'ui.luac').read_bytes() == b'lua51-bytecode'
@@ -462,19 +472,19 @@ def main() -> None:
 
     version = run("--version")
     assert version.returncode == 0
-    assert version.stdout.strip() == "PakForge 1.4.0"
+    assert version.stdout.strip() == "Paktool 1.4.0"
 
-    with tempfile.TemporaryDirectory(prefix="pakforge-test-") as raw:
+    with tempfile.TemporaryDirectory(prefix="paktool-test-") as raw:
         root = Path(raw)
         (root / "nested").mkdir()
         sample = root / "nested" / "sample.txt"
-        sample.write_text("pakforge-test\n", encoding="utf-8")
+        sample.write_text("paktool-test\n", encoding="utf-8")
 
         created = run("manifest", str(root))
         assert created.returncode == 0, created.stderr
-        manifest = root / ".pakforge-manifest.json"
+        manifest = root / ".paktool-manifest.json"
         payload = json.loads(manifest.read_text(encoding="utf-8"))
-        assert payload["tool"] == "PakForge"
+        assert payload["tool"] == "Paktool"
         assert payload["files"][0]["sha256"] == hashlib.sha256(sample.read_bytes()).hexdigest()
 
         verified = run("verify", str(root))
@@ -503,7 +513,7 @@ def main() -> None:
 
         output = root / "existing.pak"
         output.write_bytes(b"old-output")
-        backup = pakforge.backup_file(output)
+        backup = paktool.backup_file(output)
         assert backup and backup.is_file()
         assert backup.read_bytes() == b"old-output"
 
@@ -511,7 +521,7 @@ def main() -> None:
         invalid.write_bytes(b"not-a-valid-pak")
         state = root / "state"
         failure = subprocess.run(
-            [sys.executable, str(PAKFORGE), "info", str(invalid)],
+            [sys.executable, str(PAKTOOL), "info", str(invalid)],
             cwd=ROOT,
             text=True,
             capture_output=True,
@@ -520,7 +530,7 @@ def main() -> None:
         )
         assert failure.returncode == 1
         assert "Operation log saved locally:" in failure.stderr
-        native_logs = list((state / "pakforge" / "logs").glob("operation-*.jsonl"))
+        native_logs = list((state / "paktool" / "logs").glob("operation-*.jsonl"))
         assert native_logs
         native_log = max(native_logs, key=lambda path: path.stat().st_mtime).read_text(encoding="utf-8")
         assert "operation_failed" in native_log
@@ -541,7 +551,7 @@ def main() -> None:
         config_home = root / "config"
         profile_env = {**os.environ, "XDG_CONFIG_HOME": str(config_home)}
         profile = subprocess.run(
-            [sys.executable, str(PAKFORGE), "profile", "init", "debug", "--pak", str(invalid), "--lua-dir", str(new_dir), "--output", str(root / "debug.pak")],
+            [sys.executable, str(PAKTOOL), "profile", "init", "debug", "--pak", str(invalid), "--lua-dir", str(new_dir), "--output", str(root / "debug.pak")],
             cwd=ROOT,
             text=True,
             capture_output=True,
@@ -549,10 +559,10 @@ def main() -> None:
             check=False,
         )
         assert profile.returncode == 0, profile.stderr
-        profile_payload = json.loads((config_home / "pakforge" / "profiles" / "debug.json").read_text(encoding="utf-8"))
+        profile_payload = json.loads((config_home / "paktool" / "profiles" / "debug.json").read_text(encoding="utf-8"))
         assert profile_payload["target_prefix"] == "Script"
         listed = subprocess.run(
-            [sys.executable, str(PAKFORGE), "profile", "list"],
+            [sys.executable, str(PAKTOOL), "profile", "list"],
             cwd=ROOT,
             text=True,
             capture_output=True,
@@ -568,7 +578,7 @@ def main() -> None:
     assert "--dry-run" in lua_help.stdout
     assert "--verify" in lua_help.stdout
 
-    print("pakforge-tests-ok")
+    print("paktool-tests-ok")
 
 
 if __name__ == "__main__":

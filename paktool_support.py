@@ -2,7 +2,7 @@
 """Friendly UE4 Termux helper for authorized projects.
 
 The tool supports PAK unpacking, PAK repacking, and Lua injection. Running
-`tool` without a subcommand opens a guided menu.
+`paktool` without a subcommand opens a guided menu.
 """
 from __future__ import annotations
 
@@ -19,16 +19,11 @@ import sys
 import tempfile
 import time
 import traceback
-from urllib import request as urlrequest
-from urllib import error as urlerror
-from urllib.parse import urlparse
 
-APP_NAME = "tool"
-TOOL_VERSION = "2.0.0"
-MANIFEST_NAME = ".dravix-manifest.json"
-DOWNLOAD_DIR = Path("/sdcard/Download")
-REPORT_ENDPOINT_ENV = "UE4TOOL_REPORT_ENDPOINT"
-REPORT_ENDPOINT_DEFAULT = "https://ue4bugrelay-vlych7sk.manus.space/api/report"
+APP_NAME = "paktool"
+PAKTOOL_VERSION = "2.0.0"
+MANIFEST_NAME = ".paktool-manifest.json"
+DOWNLOAD_DIR = Path("/sdcard/Paktool")
 DEFAULT_UPDATE_INTERVAL_SECONDS = 6 * 60 * 60
 LOG_DIRECTORY_NAME = "logs"
 MAX_LOG_TEXT = 6000
@@ -170,40 +165,6 @@ def write_diagnostic(command: str, error: str, code: int, *, log_path: Path | No
     return report
 
 
-def report_consent_file() -> Path:
-    config_root = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-    return config_root / "ue4tool" / "report_consent"
-
-
-def reporting_consent() -> bool:
-    """Read or request the user's one-time permission for anonymous reporting."""
-    consent_path = report_consent_file()
-    try:
-        saved = consent_path.read_text(encoding="utf-8").strip().lower()
-    except OSError:
-        saved = ""
-
-    if saved == "yes":
-        return True
-    if saved == "no":
-        print(
-            "Anonymous report skipped: you previously selected No. "
-            "To be asked again, run: rm -f ~/.config/ue4tool/report_consent",
-            file=sys.stderr,
-        )
-        return False
-
-    try:
-        answer = input("Send anonymous bug report? [y/N] ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        answer = ""
-    consent = "yes" if answer in {"y", "yes"} else "no"
-    try:
-        consent_path.parent.mkdir(parents=True, exist_ok=True)
-        consent_path.write_text(consent + "\n", encoding="utf-8")
-    except OSError:
-        return False
-    return consent == "yes"
 
 
 def tool_version() -> str:
@@ -223,47 +184,6 @@ def tool_version() -> str:
         pass
     return "unknown"
 
-
-def _send_report(report_path: Path) -> bool:
-    """Send only the sanitized diagnostic allowlist after explicit user consent."""
-    if os.environ.get("TOOL_NO_REPORT") == "1":
-        return False
-
-    endpoint = os.environ.get(REPORT_ENDPOINT_ENV, REPORT_ENDPOINT_DEFAULT).strip()
-    parsed = urlparse(endpoint)
-    if parsed.scheme != "https" or not parsed.netloc:
-        return False
-    if not reporting_consent():
-        return False
-
-    try:
-        local_report = json.loads(report_path.read_text(encoding="utf-8"))
-        payload = {
-            "operation": local_report["command"],
-            "error_message": local_report["error"],
-            "tool_version": tool_version(),
-            "exit_code": int(local_report["exit_code"]),
-            "platform": "Termux Android" if local_report.get("termux") else sys.platform,
-        }
-        encoded = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-        request = urlrequest.Request(
-            endpoint,
-            data=encoded,
-            headers={
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-                "User-Agent": "ue4-termux-tool/1.0",
-            },
-            method="POST",
-        )
-        with urlrequest.urlopen(request, timeout=5) as response:
-            if response.status not in {200, 201, 202}:
-                return False
-        print("Anonymous diagnostic report sent.", file=sys.stderr)
-        return True
-    except (KeyError, OSError, ValueError, urlerror.URLError):
-        print("Anonymous diagnostic report could not be sent.", file=sys.stderr)
-        return False
 
 
 def require_file(path: Path, label: str) -> Path:
@@ -314,7 +234,7 @@ def create_manifest(root: Path, manifest_path: Path | None = None) -> Path:
     payload = {
         "format": 1,
         "tool": APP_NAME,
-        "tool_version": TOOL_VERSION,
+        "tool_version": PAKTOOL_VERSION,
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "files": files,
     }
@@ -614,7 +534,7 @@ def lua_inject(args: argparse.Namespace) -> None:
         refuse_existing_output(output, args.overwrite)
 
     binary = repak_binary(args.repak)
-    with tempfile.TemporaryDirectory(prefix="tool-") as temp_name:
+    with tempfile.TemporaryDirectory(prefix="paktool-") as temp_name:
         staging = Path(temp_name) / "pak-files"
         print("[1/3] Unpacking source PAK...")
         unpack_cmd = ["unpack", str(pak), "--output", str(staging), "--strip-prefix", args.strip_prefix, "--force", "--quiet"]
@@ -649,7 +569,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=APP_NAME, description="Friendly UE4 PAK unpack, repack, and Lua inject tool for Termux")
     sub = parser.add_subparsers(dest="command")
 
-    p = sub.add_parser("unpack", help="extract a UE4 PAK; usage: tool unpack game.pak [folder]")
+    p = sub.add_parser("unpack", help="extract a UE4 PAK; usage: paktool unpack game.pak [folder]")
     p.add_argument("pak")
     p.add_argument("output", nargs="?", help="output directory; default: PAK filename without extension")
     p.add_argument("--out", "-o", dest="output_flag", help="same as the optional output path")
@@ -659,7 +579,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_repak_common(p, aes=True)
     p.set_defaults(func=pak_unpack)
 
-    p = sub.add_parser("repack", help="create a PAK; usage: tool repack folder new.pak")
+    p = sub.add_parser("repack", help="create a PAK; usage: paktool repack folder new.pak")
     p.add_argument("source", help="unpacked PAK directory")
     p.add_argument("output", help="new PAK path")
     add_pack_options(p)
@@ -667,7 +587,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_repak_common(p)
     p.set_defaults(func=pak_repack)
 
-    p = sub.add_parser("inject", help="inject Lua; usage: tool inject game.pak lua-folder [new.pak]")
+    p = sub.add_parser("inject", help="inject Lua; usage: paktool inject game.pak lua-folder [new.pak]")
     p.add_argument("pak")
     p.add_argument("lua_source", help="one Lua file or a directory containing Lua files")
     p.add_argument("output", nargs="?", help="new PAK path; default: <input>.lua.pak")
@@ -756,7 +676,7 @@ def dependency_status() -> bool:
     print(f"  repak: {'OK' if repak_ok else 'missing'}")
     if not repak_ok:
         print("\nrepak missing hai. Pehle ye command run karein:")
-        print("  bash ~/ue4-termux-tool/install-termux.sh")
+        print("  bash ~/paktool/install-termux.sh")
         return False
     return True
 
@@ -795,10 +715,10 @@ def update_project() -> bool:
     if not script.is_file():
         print(f"Update script not found at {script}. Re-clone the public repository first.")
         return False
-    print("Updating tool...")
+    print("Updating Paktool...")
     result = subprocess.run(["bash", str(script)], cwd=project, check=False)
     if result.returncode != 0:
-        print("Update failed. You can retry with: bash ~/ue4-termux-tool/update-termux.sh")
+        print("Update failed. You can retry with: bash ~/paktool/update-termux.sh")
         return False
     return True
 
@@ -822,11 +742,10 @@ def execute_with_recovery(command: str, handler, args: argparse.Namespace) -> bo
         print(f"Diagnostic saved locally: {report}", file=sys.stderr)
         if operation_log.path:
             print(f"Operation log saved locally: {operation_log.path}", file=sys.stderr)
-        _send_report(report)
-        if os.environ.get("TOOL_NO_AUTO_RETRY") == "1":
-            active_log_event("retry_skipped", reason="TOOL_NO_AUTO_RETRY=1")
+        if os.environ.get("PAKTOOL_NO_AUTO_RETRY") == "1":
+            active_log_event("retry_skipped", reason="PAKTOOL_NO_AUTO_RETRY=1")
             return False
-        print("Trying one tool update and retry...")
+        print("Trying one Paktool update and retry...")
         active_log_event("retry_update_started")
         if not update_project():
             active_log_event("retry_update_failed")
@@ -846,7 +765,6 @@ def execute_with_recovery(command: str, handler, args: argparse.Namespace) -> bo
             print(f"New diagnostic saved locally: {retry_report}", file=sys.stderr)
             if operation_log.path:
                 print(f"Operation log saved locally: {operation_log.path}", file=sys.stderr)
-            _send_report(retry_report)
             return False
     except Exception as exc:
         error_text = f"unexpected {type(exc).__name__}: {exc}"
@@ -857,7 +775,6 @@ def execute_with_recovery(command: str, handler, args: argparse.Namespace) -> bo
         print(f"Diagnostic saved locally: {report}", file=sys.stderr)
         if operation_log.path:
             print(f"Operation log saved locally: {operation_log.path}", file=sys.stderr)
-        _send_report(report)
         return False
     finally:
         active_log_event("operation_finished")
@@ -867,7 +784,7 @@ def execute_with_recovery(command: str, handler, args: argparse.Namespace) -> bo
 
 def start_background_update() -> None:
     """Start a detached update check without delaying the interactive menu."""
-    if os.environ.get("TOOL_NO_AUTO_UPDATE") == "1":
+    if os.environ.get("PAKTOOL_NO_AUTO_UPDATE") == "1":
         return
     project = Path(__file__).resolve().parent
     update_script = project / "update-termux.sh"
@@ -875,11 +792,11 @@ def start_background_update() -> None:
         return
     cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
     cache.mkdir(parents=True, exist_ok=True)
-    lock = cache / "tool-update.lock"
-    log = cache / "tool-update.log"
-    last_check = cache / "tool-update.last-success"
+    lock = cache / "paktool-update.lock"
+    log = cache / "paktool-update.log"
+    last_check = cache / "paktool-update.last-success"
     try:
-        interval = max(60, int(os.environ.get("TOOL_UPDATE_INTERVAL_SECONDS", DEFAULT_UPDATE_INTERVAL_SECONDS)))
+        interval = max(60, int(os.environ.get("PAKTOOL_UPDATE_INTERVAL_SECONDS", DEFAULT_UPDATE_INTERVAL_SECONDS)))
     except ValueError:
         interval = DEFAULT_UPDATE_INTERVAL_SECONDS
     try:

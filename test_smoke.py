@@ -1,59 +1,55 @@
-from pathlib import Path
+from __future__ import annotations
+
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import time
-from unittest.mock import MagicMock, patch
+from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ue4tool import (
-    REPORT_ENDPOINT_DEFAULT,
-    ToolError,
-    _send_report,
-    execute_with_recovery,
-    sanitize_diagnostic_text,
-    run_repak,
-    start_background_update,
-)
+from paktool_support import ToolError, run_repak, sanitize_diagnostic_text, start_background_update
 
 ROOT = Path(__file__).resolve().parent
-TOOL = ROOT / "ue4tool.py"
-
+TOOL = ROOT / "paktool_support.py"
 source_text = TOOL.read_text(encoding="utf-8")
 assert "def backup_file" not in source_text
 assert "start_background_update" in source_text
-assert "tool-update.lock" in source_text
-assert 'APP_NAME = "tool"' in source_text
+assert "paktool-update.lock" in source_text
+assert 'APP_NAME = "paktool"' in source_text
+assert "_send_report" not in source_text
+assert "urlopen" not in source_text
 sanitized = sanitize_diagnostic_text("--aes-key SECRET /sdcard/private/game.pak")
 assert "SECRET" not in sanitized
 assert "/sdcard/private/game.pak" not in sanitized
-for script in ("setup.sh", "update-termux.sh", "install-termux.sh"):
+for script in ("setup.sh", "update-termux.sh", "install-termux.sh", "bootstrap.sh"):
     subprocess.run(["bash", "-n", str(ROOT / script)], check=True)
 
 installer_text = (ROOT / "install-termux.sh").read_text(encoding="utf-8")
 assert 'CARGO_BIN_DIR="${CARGO_HOME:-$HOME/.cargo}/bin"' in installer_text
 assert 'ln -sf "$REPAK_CARGO_BIN" "$BIN_DIR/repak"' in installer_text
 assert 'export PATH="$BIN_DIR:$CARGO_BIN_DIR:$PATH"' in installer_text
+assert installer_text.count('cat > "$BIN_DIR/paktool"') == 1
+assert 'Error: tool command was not installed.' not in installer_text
 
 assert "DEFAULT_UPDATE_INTERVAL_SECONDS = 6 * 60 * 60" in source_text
-assert "tool-update.last-success" in source_text
+assert "paktool-update.last-success" in source_text
 assert 'source.rglob("*.lua")' in source_text
 assert "shutil.copyfile(lua_file, destination)" in source_text
 
 timings: dict[str, float] = {}
-
-with tempfile.TemporaryDirectory(prefix="tool-update-cache-test-") as update_cache:
+with tempfile.TemporaryDirectory(prefix="paktool-update-cache-test-") as update_cache:
     cache_dir = Path(update_cache)
-    (cache_dir / "tool-update.last-success").touch()
+    (cache_dir / "paktool-update.last-success").touch()
     started = time.perf_counter()
-    with patch.dict(os.environ, {"XDG_CACHE_HOME": update_cache}, clear=False), patch("ue4tool.subprocess.Popen") as update_process:
+    with patch.dict(os.environ, {"XDG_CACHE_HOME": update_cache}, clear=False), patch("paktool_support.subprocess.Popen") as update_process:
         start_background_update()
     timings["background_update_throttled"] = time.perf_counter() - started
     update_process.assert_not_called()
 
-with tempfile.TemporaryDirectory(prefix="ue4tool-test-") as tmp:
+with tempfile.TemporaryDirectory(prefix="paktool-support-test-") as tmp:
     base = Path(tmp)
     source = base / "unpacked"
     (source / "Existing").mkdir(parents=True)
@@ -85,43 +81,36 @@ else:
     input_pak.write_text("placeholder", encoding="utf-8")
     unpacked = base / "unpacked-from-pak"
     started = time.perf_counter()
-    subprocess.run([
-        sys.executable, str(TOOL), "unpack", str(input_pak), str(unpacked), "--repak", str(fake_repak)
-    ], check=True)
+    subprocess.run([sys.executable, str(TOOL), "unpack", str(input_pak), str(unpacked), "--repak", str(fake_repak)], check=True)
     timings["unpack"] = time.perf_counter() - started
     assert (unpacked / "Existing/file.txt").read_text(encoding="utf-8") == "existing"
 
     repacked = base / "repacked.pak"
     started = time.perf_counter()
-    subprocess.run([
-        sys.executable, str(TOOL), "repack", str(source), str(repacked),
-        "--version", "v7", "--repak", str(fake_repak)
-    ], check=True)
+    subprocess.run([sys.executable, str(TOOL), "repack", str(source), str(repacked), "--version", "v7", "--repak", str(fake_repak)], check=True)
     timings["repack"] = time.perf_counter() - started
     assert repacked.exists()
     assert "Existing/file.txt" in repacked.read_text(encoding="utf-8")
 
     injected = base / "injected.pak"
     started = time.perf_counter()
-    subprocess.run([
-        sys.executable, str(TOOL), "inject", str(input_pak), str(lua), str(injected), "--repak", str(fake_repak),
-        "--target-prefix", "Script", "--version", "v7"
-    ], check=True)
+    subprocess.run([sys.executable, str(TOOL), "inject", str(input_pak), str(lua), str(injected), "--repak", str(fake_repak), "--target-prefix", "Script", "--version", "v7"], check=True)
     timings["inject"] = time.perf_counter() - started
     text = injected.read_text(encoding="utf-8")
     assert "Script/MyMod/init.lua" in text
     assert "Script/MyMod/player.lua" in text
 
+
 def test_repak_empty_output_failure_diagnostic() -> None:
-    with tempfile.TemporaryDirectory(prefix="tool-empty-repak-test-") as empty_repak_tmp:
+    with tempfile.TemporaryDirectory(prefix="paktool-empty-repak-test-") as empty_repak_tmp:
         empty_repak = Path(empty_repak_tmp) / "repak"
-        empty_repak.write_text("#!/bin/sh\\nexit 1\\n", encoding="utf-8")
+        empty_repak.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
         empty_repak.chmod(0o755)
         mocked_results = [
             subprocess.CompletedProcess([str(empty_repak)], 1, stdout="", stderr=""),
-            subprocess.CompletedProcess([str(empty_repak), "--version"], 0, stdout="repak 1.0\\n", stderr=""),
+            subprocess.CompletedProcess([str(empty_repak), "--version"], 0, stdout="repak 1.0\n", stderr=""),
         ]
-        with patch("ue4tool.subprocess.run", side_effect=mocked_results) as mocked_run:
+        with patch("paktool_support.subprocess.run", side_effect=mocked_results) as mocked_run:
             try:
                 run_repak(str(empty_repak), None, ["unpack", "input.pak"])
             except ToolError as exc:
@@ -137,88 +126,17 @@ def test_repak_empty_output_failure_diagnostic() -> None:
 
 test_repak_empty_output_failure_diagnostic()
 
-with tempfile.TemporaryDirectory(prefix="tool-report-test-") as report_tmp:
-    report_env = os.environ.copy()
-    report_env["XDG_STATE_HOME"] = report_tmp
-    report_env["TOOL_NO_AUTO_RETRY"] = "1"
-    report_env["TOOL_NO_REPORT"] = "1"
-    failed = subprocess.run(
-        [sys.executable, str(TOOL), "unpack", "/sdcard/private/missing.pak"],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=report_env,
-    )
+with tempfile.TemporaryDirectory(prefix="paktool-local-diagnostic-test-") as diagnostic_tmp:
+    env = os.environ.copy()
+    env["XDG_STATE_HOME"] = diagnostic_tmp
+    env["PAKTOOL_NO_AUTO_RETRY"] = "1"
+    failed = subprocess.run([sys.executable, str(TOOL), "unpack", "/sdcard/private/missing.pak"], check=False, capture_output=True, text=True, env=env)
     assert failed.returncode != 0
-    reports = list((Path(report_tmp) / "tool").glob("error-*.json"))
+    reports = list((Path(diagnostic_tmp) / "paktool").glob("error-*.json"))
     assert reports
     report_data = json.loads(reports[0].read_text(encoding="utf-8"))
     assert report_data["command"] == "unpack"
     assert "PAK contents" in report_data["privacy"]
-
-    no_report_env = {
-        "TOOL_NO_REPORT": "1",
-        "UE4TOOL_REPORT_ENDPOINT": "https://relay.example/api/report",
-    }
-    with patch.dict(os.environ, no_report_env, clear=False), patch("ue4tool.urlrequest.urlopen") as blocked_send:
-        assert _send_report(reports[0]) is False
-        blocked_send.assert_not_called()
-
-    with tempfile.TemporaryDirectory(prefix="tool-consent-test-") as consent_tmp:
-        fake_response = MagicMock()
-        fake_response.__enter__.return_value.status = 202
-        send_env = {
-            "TOOL_NO_REPORT": "0",
-            "UE4TOOL_REPORT_ENDPOINT": "https://relay.example/api/report",
-            "XDG_CONFIG_HOME": consent_tmp,
-        }
-        with patch.dict(os.environ, send_env, clear=False), patch("builtins.input", return_value="y"), patch("ue4tool.urlrequest.urlopen", return_value=fake_response) as sent:
-            assert _send_report(reports[0]) is True
-            outgoing = json.loads(sent.call_args.args[0].data.decode("utf-8"))
-            assert set(outgoing) == {"operation", "error_message", "tool_version", "exit_code", "platform"}
-            assert "/sdcard/private/missing.pak" not in outgoing["error_message"]
-            assert sent.call_args.args[0].get_header("User-agent") == "ue4-termux-tool/1.0"
-        assert (Path(consent_tmp) / "ue4tool" / "report_consent").read_text(encoding="utf-8").strip() == "yes"
-
-    with tempfile.TemporaryDirectory(prefix="tool-no-consent-test-") as declined_tmp:
-        declined_file = Path(declined_tmp) / "ue4tool" / "report_consent"
-        declined_file.parent.mkdir(parents=True)
-        declined_file.write_text("no\n", encoding="utf-8")
-        declined_env = {
-            "TOOL_NO_REPORT": "0",
-            "UE4TOOL_REPORT_ENDPOINT": "https://relay.example/api/report",
-            "XDG_CONFIG_HOME": declined_tmp,
-        }
-        with patch.dict(os.environ, declined_env, clear=False), patch("ue4tool.urlrequest.urlopen") as blocked_send:
-            assert _send_report(reports[0]) is False
-            blocked_send.assert_not_called()
-
-    with tempfile.TemporaryDirectory(prefix="tool-default-endpoint-test-") as default_tmp:
-        default_response = MagicMock()
-        default_response.__enter__.return_value.status = 202
-        default_env = {
-            "TOOL_NO_REPORT": "0",
-            "XDG_CONFIG_HOME": default_tmp,
-        }
-        with patch.dict(os.environ, default_env, clear=True), patch("builtins.input", return_value="y"), patch("ue4tool.urlrequest.urlopen", return_value=default_response) as default_sent:
-            assert _send_report(reports[0]) is True
-            assert default_sent.call_args.args[0].full_url == REPORT_ENDPOINT_DEFAULT
-
-    initial_report = Path(report_tmp) / "initial.json"
-    retry_report = Path(report_tmp) / "retry.json"
-    handler_calls = 0
-
-    def always_fail(_args):
-        nonlocal_handler = None
-        del nonlocal_handler
-        raise ToolError("repak failed with exit code 1", 1)
-
-    with patch("ue4tool.write_diagnostic", side_effect=[initial_report, retry_report]), patch(
-        "ue4tool.update_project", return_value=True
-    ), patch("ue4tool._send_report") as retry_send:
-        assert execute_with_recovery("unpack", always_fail, object()) is False
-        assert retry_send.call_args_list[0].args == (initial_report,)
-        assert retry_send.call_args_list[1].args == (retry_report,)
 
 started = time.perf_counter()
 help_result = subprocess.run([sys.executable, str(TOOL), "--help"], check=True, capture_output=True, text=True)
@@ -229,3 +147,6 @@ assert "inject" in help_result.stdout
 for label, elapsed in timings.items():
     print(f"benchmark_{label}_seconds={elapsed:.3f}")
 print("focused-smoke-tests-ok")
+
+if __name__ == "__main__":
+    pass

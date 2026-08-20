@@ -1,4 +1,4 @@
-# PakForge parser backend. Use only with files you own or are authorized to modify.
+# Paktool parser backend. Use only with files you own or are authorized to modify.
 
 import itertools as it
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -41,7 +41,7 @@ from Crypto.Hash import SHA1
 from Crypto.Util.Padding import unpad
 from zstandard import ZstdDecompressor, ZstdCompressionDict, DICT_TYPE_AUTO, ZstdCompressor
 
-console = Console(no_color=bool(os.environ.get('NO_COLOR') or os.environ.get('PAKFORGE_PLAIN')))
+console = Console(no_color=bool(os.environ.get('NO_COLOR') or os.environ.get('PAKTOOL_PLAIN')))
 
 _OPERATION_LOG_CALLBACK = None
 
@@ -167,7 +167,7 @@ class SimpleBlockDisplay:
             console.print(f"[bold green]║[/]   Success Rate:  [bold yellow]{success_rate:.1f}%[/bold yellow]")
         console.print(f"[bold green]╚═════════════════════════════════════════════════════════════════╝[/bold green]")
 
-# ==================== PAKFORGE PARSER CORE ====================
+# ==================== PAKTOOL PARSER CORE ====================
 
 ZUC_KEY = bytes.fromhex('01010101010101010101010101010101')
 ZUC_IV = bytes.fromhex('FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF')
@@ -228,7 +228,7 @@ CM_MASK = 15
 SUPPORTED_COMPRESSION_METHODS = {CM_NONE, CM_ZLIB, CM_OODLE, CM_ZSTD, CM_ZSTD_DICT}
 
 # Oodle's public compressor enum uses Kraken (8) as the broadly compatible
-# default codec. The DLL is optional and must be supplied by the user; PakForge
+# default codec. The DLL is optional and must be supplied by the user; Paktool
 # never downloads or bundles this proprietary runtime.
 OODLE_CODEC_KRAKEN = 8
 OODLE_LEVEL_NORMAL = 4
@@ -685,7 +685,7 @@ class PakCrypto:
 class OodleCodec:
     """Optional adapter for a user-provided Oodle2 runtime.
 
-    Oodle is proprietary software, so PakForge only loads a DLL that the user
+    Oodle is proprietary software, so Paktool only loads a DLL that the user
     already owns or has installed. No runtime is downloaded or bundled. The
     public C ABI is configured lazily so normal ZLIB/ZSTD workflows do not
     require Oodle or Windows-specific libraries.
@@ -697,7 +697,7 @@ class OodleCodec:
     @classmethod
     def _candidate_paths(cls) -> list[str]:
         candidates = []
-        configured = os.environ.get("PAKFORGE_OODLE_DLL")
+        configured = os.environ.get("PAKTOOL_OODLE_DLL")
         if configured:
             candidates.append(configured)
         module_dir = Path(__file__).resolve().parent
@@ -765,7 +765,7 @@ class OodleCodec:
         if runtime is None:
             raise RuntimeError(
                 "CM_OODLE entry requires a user-provided oodle2.dll; "
-                "set PAKFORGE_OODLE_DLL or place it in SOURCE/"
+                "set PAKTOOL_OODLE_DLL or place it in SOURCE/"
             )
         if raw_size <= 0:
             raise ValueError("Oodle decompression requires a positive raw block size")
@@ -989,7 +989,7 @@ class TencentPakFile:
 
         file_path.parent.mkdir(parents=True, exist_ok=True)
         temporary_path = file_path.with_name(
-            f".{file_path.name}.pakforge-{uuid.uuid4().hex}.tmp"
+            f".{file_path.name}.paktool-{uuid.uuid4().hex}.tmp"
         )
         try:
             with open(temporary_path, 'wb') as file:
@@ -1969,7 +1969,7 @@ def repack_pak_file_patch(
         console.print("[bold yellow]No changed files found; patch output was not created.[/bold yellow]")
         return 0
 
-    temporary = output_path.with_name(f".{output_path.name}.pakforge-patch-{uuid.uuid4().hex}.tmp")
+    temporary = output_path.with_name(f".{output_path.name}.paktool-patch-{uuid.uuid4().hex}.tmp")
     try:
         shutil.copy2(source_path, temporary)
         with open(temporary, "r+b") as outfh:
@@ -2079,9 +2079,14 @@ def repack_gamepatch(pak, repack_dir, output_pak):
     pak._zstd_dict = None
     repack_pak_file_with_block_display(pak_file=pak, edited_root=repack_dir, output_path=output_pak)
 
-SDCARD_DOWNLOAD_DIR = Path("/sdcard/Download")
-SDCARD_EDIT_DIR = SDCARD_DOWNLOAD_DIR / "EDIT"
-SDCARD_UNPACKED_DIR = SDCARD_DOWNLOAD_DIR / "UNPACKED"
+PAKTOOL_ROOT_DIR = Path("/sdcard/Paktool")
+SDCARD_PAK_DIR = PAKTOOL_ROOT_DIR / "PAK"
+PAKTOOL_EDIT_DIR = PAKTOOL_ROOT_DIR / "EDIT"
+PAKTOOL_UNPACKED_DIR = PAKTOOL_ROOT_DIR / "UNPACKED"
+SDCARD_ROOT_DIR = PAKTOOL_ROOT_DIR
+SDCARD_EDIT_DIR = PAKTOOL_EDIT_DIR
+SDCARD_UNPACKED_DIR = PAKTOOL_UNPACKED_DIR
+SDCARD_MODDED_DIR = PAKTOOL_ROOT_DIR / "MODDED"
 
 
 def _directory_has_files(directory: Path) -> bool:
@@ -2095,13 +2100,15 @@ def _directory_has_files(directory: Path) -> bool:
 def ensure_sdcard_directories() -> bool:
     """Create the only folders used by the interactive SD-card workflow."""
     try:
-        SDCARD_DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-        SDCARD_EDIT_DIR.mkdir(parents=True, exist_ok=True)
-        SDCARD_UNPACKED_DIR.mkdir(parents=True, exist_ok=True)
+        PAKTOOL_ROOT_DIR.mkdir(parents=True, exist_ok=True)
+        SDCARD_PAK_DIR.mkdir(parents=True, exist_ok=True)
+        PAKTOOL_EDIT_DIR.mkdir(parents=True, exist_ok=True)
+        PAKTOOL_UNPACKED_DIR.mkdir(parents=True, exist_ok=True)
+        SDCARD_MODDED_DIR.mkdir(parents=True, exist_ok=True)
         return True
     except OSError as exc:
         console.print(
-            f"[bold {NEON['red']}]Cannot access {SDCARD_DOWNLOAD_DIR}: {escape(str(exc))}[/bold {NEON['red']}]"
+            f"[bold {NEON['red']}]Cannot access {PAKTOOL_ROOT_DIR}: {escape(str(exc))}[/bold {NEON['red']}]"
         )
         console.print(
             f"[bold {NEON['cyan']}]Run Termux storage setup first, then retry.[/bold {NEON['cyan']}]"
@@ -2110,11 +2117,11 @@ def ensure_sdcard_directories() -> bool:
 
 
 def get_pak_files_from_sdcard() -> list[Path]:
-    """Return top-level .pak files from /sdcard/Download in stable order."""
-    if not SDCARD_DOWNLOAD_DIR.is_dir():
+    """Return top-level .pak files from /sdcard/Paktool/PAK in stable order."""
+    if not SDCARD_PAK_DIR.is_dir():
         return []
     return sorted(
-        (item for item in SDCARD_DOWNLOAD_DIR.iterdir() if item.is_file() and item.suffix.lower() == ".pak"),
+        (item for item in SDCARD_PAK_DIR.iterdir() if item.is_file() and item.suffix.lower() == ".pak"),
         key=lambda item: item.name.casefold(),
     )
 
@@ -2124,11 +2131,11 @@ def select_pak_from_sdcard(prompt: str = "Select file") -> Path | None:
     pak_files = get_pak_files_from_sdcard()
     if not pak_files:
         console.print(
-            f"[bold {NEON['yellow']}]No .pak files found in /sdcard/Download/. Please copy your PAK file there.[/bold {NEON['yellow']}]"
+            f"[bold {NEON['yellow']}]No .pak files found in /sdcard/Paktool/PAK/. Please copy your PAK file there.[/bold {NEON['yellow']}]"
         )
         return None
 
-    console.print(f"[bold {NEON['yellow']}]📁 PAK files in /sdcard/Download/:[/bold {NEON['yellow']}]")
+    console.print(f"[bold {NEON['yellow']}]📁 PAK files in /sdcard/Paktool/PAK/:[/bold {NEON['yellow']}]")
     for index, pak_file in enumerate(pak_files, 1):
         size = human_size(pak_file.stat().st_size)
         console.print(
@@ -2157,7 +2164,7 @@ def print_ultimate_banner() -> None:
     os.system("cls" if os.name == "nt" else "clear")
     console.print(
         f"[bold {NEON['purple']}]═══════════════════════════════════════[/bold {NEON['purple']}]\n"
-        f"[bold {NEON['purple']}]          PAKFORGE ULTIMATE[/bold {NEON['purple']}]\n"
+        f"[bold {NEON['purple']}]          PAKTOOL ULTIMATE[/bold {NEON['purple']}]\n"
         f"[bold {NEON['purple']}]═══════════════════════════════════════[/bold {NEON['purple']}]"
     )
 
@@ -2165,7 +2172,7 @@ def print_ultimate_banner() -> None:
 def print_banner():
     os.system('cls' if os.name == 'nt' else 'clear')
     logo = Text()
-    logo.append('ＰＡＫＦＯＲＧＥ', style=f"bold {NEON['purple']}")
+    logo.append('ＰＡＫＴＯＯＬ', style=f"bold {NEON['purple']}")
     logo.append('\nＮＥＯＮ  ＴＥＲＭＩＮＡＬ  ＳＵＩＴＥ', style=f"bold {NEON['blue']}")
     logo.append('\nPAK INSPECT  •  UNPACK  •  REPACK', style=f"bold {NEON['green']}")
     panel = Panel(
@@ -2179,7 +2186,7 @@ def print_banner():
     )
     console.print(Align.center(panel))
     console.print()
-    console.print(f"[bold {NEON['blue']}]┌─[/bold {NEON['blue']}][bold white]pakforge@termux[/bold white][bold {NEON['blue']}]─[/bold {NEON['blue']}][dim]interactive workspace[/dim]")
+    console.print(f"[bold {NEON['blue']}]┌─[/bold {NEON['blue']}][bold white]paktool@termux[/bold white][bold {NEON['blue']}]─[/bold {NEON['blue']}][dim]interactive workspace[/dim]")
     console.print(f"[bold {NEON['pink']}]└──➤[/bold {NEON['pink']}] [bold {NEON['green']}]SYSTEM READY[/bold {NEON['green']}]  [dim]safe local PAK workflow[/dim]")
     console.print()
 
@@ -2221,7 +2228,7 @@ def human_size(size: int) -> str:
 def delete_folder(data_path: Path) -> None:
     folders = []
     for item in data_path.iterdir():
-        if item.is_dir() and item.name not in ['PAK', 'UNPACK', 'REPACK', 'RESULT', 'PAK TOOL']:
+        if item.is_dir() and item.name not in ['PAK', 'EDIT', 'UNPACKED', 'MODDED']:
             folders.append(item)
     if not folders:
         console.print('[bold #FFAA00]⚠ No folders found to delete![/bold #FFAA00]')
@@ -2323,7 +2330,7 @@ def unpack_selected_sdcard_pak() -> None:
         _log_operation_event('menu_action_cancelled', operation='unpack')
         return
 
-    output_dir = SDCARD_UNPACKED_DIR / pak_file.stem
+    output_dir = PAKTOOL_UNPACKED_DIR / pak_file.stem
     _log_operation_event('menu_action_started', operation='unpack', source=str(pak_file), output=str(output_dir))
     try:
         console.print(
@@ -2333,7 +2340,7 @@ def unpack_selected_sdcard_pak() -> None:
         pak.dump(output_dir, workers=4)
         dump_unpacking_log(pak, output_dir / f"Debug_{pak_file.stem}.log")
         console.print(
-            f"[bold {NEON['green']}]✅ Done! Edit files in {SDCARD_EDIT_DIR}/[/bold {NEON['green']}]"
+            f"[bold {NEON['green']}]✅ Done! Edit files in {PAKTOOL_EDIT_DIR}/[/bold {NEON['green']}]"
         )
         _log_operation_event('menu_action_succeeded', operation='unpack', source=str(pak_file), output=str(output_dir))
     except Exception as exc:
@@ -2346,7 +2353,7 @@ def unpack_selected_sdcard_pak() -> None:
 
 def lua_inject_selected_sdcard_pak() -> None:
     """Inject only Lua source/bytecode files from the SD-card EDIT folder."""
-    SDCARD_EDIT_DIR.mkdir(parents=True, exist_ok=True)
+    PAKTOOL_EDIT_DIR.mkdir(parents=True, exist_ok=True)
 
     pak_file = select_pak_from_sdcard("Source PAK")
     if pak_file is None:
@@ -2367,7 +2374,7 @@ def lua_inject_selected_sdcard_pak() -> None:
 
     lua_files = sorted(
         (
-            path for path in SDCARD_EDIT_DIR.rglob('*')
+            path for path in PAKTOOL_EDIT_DIR.rglob('*')
             if path.is_file() and path.suffix.lower() in {'.lua', '.luac'}
         ),
         key=lambda path: path.as_posix().casefold(),
@@ -2375,13 +2382,13 @@ def lua_inject_selected_sdcard_pak() -> None:
     if not lua_files:
         _log_operation_event('menu_action_failed', operation='lua_inject', source=str(pak_file), error='No .lua or .luac files found in EDIT')
         console.print(
-            f"[bold {NEON['yellow']}]No .lua or .luac files found in {SDCARD_EDIT_DIR}/.[/bold {NEON['yellow']}]"
+            f"[bold {NEON['yellow']}]No .lua or .luac files found in {PAKTOOL_EDIT_DIR}/.[/bold {NEON['yellow']}]"
         )
         return
 
-    output_pak = SDCARD_DOWNLOAD_DIR / f"MODDED_{pak_file.name}"
+    output_pak = SDCARD_MODDED_DIR / f"MODDED_{pak_file.name}"
     expected_paths = [
-        normalize_pak_path(PurePath(target_path) / source.relative_to(SDCARD_EDIT_DIR))
+        normalize_pak_path(PurePath(target_path) / source.relative_to(PAKTOOL_EDIT_DIR))
         for source in lua_files
     ]
     _log_operation_event(
@@ -2391,10 +2398,10 @@ def lua_inject_selected_sdcard_pak() -> None:
     try:
         # Stage only Lua files so images, configs, and other EDIT content cannot
         # accidentally enter this Lua-only injection workflow.
-        with tempfile.TemporaryDirectory(prefix='pakforge-lua-inject-') as staging:
+        with tempfile.TemporaryDirectory(prefix='paktool-lua-inject-') as staging:
             staging_root = Path(staging)
             for source in lua_files:
-                relative = source.relative_to(SDCARD_EDIT_DIR)
+                relative = source.relative_to(PAKTOOL_EDIT_DIR)
                 destination = staging_root / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, destination)
@@ -2431,11 +2438,11 @@ def lua_inject_selected_sdcard_pak() -> None:
 
 
 def repack_selected_sdcard_pak() -> None:
-    SDCARD_EDIT_DIR.mkdir(parents=True, exist_ok=True)
-    if not _directory_has_files(SDCARD_EDIT_DIR):
+    PAKTOOL_EDIT_DIR.mkdir(parents=True, exist_ok=True)
+    if not _directory_has_files(PAKTOOL_EDIT_DIR):
         _log_operation_event('menu_action_failed', operation='repack_full', error='EDIT folder is empty')
         console.print(
-            f"[bold {NEON['yellow']}]EDIT folder is empty. Place your modified files in /sdcard/Download/EDIT/ first.[/bold {NEON['yellow']}]"
+            f"[bold {NEON['yellow']}]EDIT folder is empty. Place your modified files in /sdcard/Paktool/EDIT/ first.[/bold {NEON['yellow']}]"
         )
         return
 
@@ -2447,7 +2454,7 @@ def repack_selected_sdcard_pak() -> None:
     default_target = "Content/Lua/Mods"
     console.print(f"[bold {NEON['cyan']}]📁 Source PAK: {pak_file.name}[/bold {NEON['cyan']}]")
     console.print(
-        f"[bold {NEON['cyan']}]📁 Using files from: {SDCARD_EDIT_DIR}/[/bold {NEON['cyan']}]"
+        f"[bold {NEON['cyan']}]📁 Using files from: {PAKTOOL_EDIT_DIR}/[/bold {NEON['cyan']}]"
     )
     target_path = safe_input(
         f"[bold {NEON['cyan']}]📁 Target path (inside PAK) [default: {default_target}]:[/bold {NEON['cyan']}] "
@@ -2459,10 +2466,10 @@ def repack_selected_sdcard_pak() -> None:
         console.print(f"[bold {NEON['red']}]Repack failed: {escape(str(exc))}[/bold {NEON['red']}]")
         return
 
-    output_pak = SDCARD_DOWNLOAD_DIR / f"MODDED_{pak_file.name}"
+    output_pak = SDCARD_MODDED_DIR / f"MODDED_{pak_file.name}"
     expected_paths = [
-        normalize_pak_path(PurePath(target_path) / source.relative_to(SDCARD_EDIT_DIR))
-        for source in SDCARD_EDIT_DIR.rglob('*')
+        normalize_pak_path(PurePath(target_path) / source.relative_to(PAKTOOL_EDIT_DIR))
+        for source in PAKTOOL_EDIT_DIR.rglob('*')
         if source.is_file()
     ]
     _log_operation_event(
@@ -2473,7 +2480,7 @@ def repack_selected_sdcard_pak() -> None:
         pak = TencentPakFile(pak_file)
         count = repack_pak_file_full(
             pak,
-            SDCARD_EDIT_DIR,
+            PAKTOOL_EDIT_DIR,
             output_pak,
             target_path=target_path,
             force_add=True,

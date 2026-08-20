@@ -2,9 +2,9 @@
 set -euo pipefail
 
 REPO="https://github.com/itzgeniusboy/ue4-termux-tool.git"
-PROJECT="$HOME/ue4-termux-tool"
+PROJECT="$HOME/paktool"
 PREFIX_DIR="${PREFIX:-/data/data/com.termux/files/usr}"
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/pakforge"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/paktool"
 BOOTSTRAP_STATUS="$STATE_DIR/bootstrap-status.json"
 BOOTSTRAP_LOG="$STATE_DIR/bootstrap.log"
 BOOTSTRAP_LOCK="$STATE_DIR/bootstrap.lock"
@@ -13,7 +13,7 @@ STARTED_EPOCH="$(date +%s)"
 STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 HEARTBEAT_COUNT=0
 
-if [ "${PAKFORGE_PLAIN:-0}" = "1" ] || [ "${NO_COLOR:-0}" = "1" ]; then
+if [ "${PAKTOOL_PLAIN:-0}" = "1" ] || [ "${NO_COLOR:-0}" = "1" ]; then
   PINK=""; CYAN=""; GREEN=""; YELLOW=""; RESET=""
 else
   PINK="\033[1;35m"; CYAN="\033[1;36m"; GREEN="\033[1;32m"; YELLOW="\033[1;33m"; RESET="\033[0m"
@@ -49,7 +49,7 @@ write_status() {
 
 fail() {
   write_status failed "$1" 0 0 "Failed"
-  printf '%s\n' "PakForge setup failed: $1" >> "$BOOTSTRAP_LOG"
+  printf '%s\n' "Paktool setup failed: $1" >> "$BOOTSTRAP_LOG"
   exit 1
 }
 
@@ -120,13 +120,13 @@ show_first_run() {
     3) spinner='\\' ;;
   esac
   printf '\033[H\033[J'
-  printf '%bPakForge Launcher — OPEN%b\n' "$PINK" "$RESET"
-  printf '%bFull PakForge menu is preparing automatically.%b\n\n' "$CYAN" "$RESET"
+  printf '%bPaktool Launcher — OPEN%b\n' "$PINK" "$RESET"
+  printf '%bFull Paktool menu is preparing automatically.%b\n\n' "$CYAN" "$RESET"
   printf 'This launcher is active now; no second command is needed.\n'
   printf '%s %3s%% stage estimate  |  %3s%% remaining  |  %s\n' "$spinner" "$percent" "$remaining" "$stage"
   progress_bar "$percent"
   printf '  %3s%%\n\n' "$percent"
-  printf 'Minimum runtime and PakForge files are being prepared.\n'
+  printf 'Minimum runtime and Paktool files are being prepared.\n'
   printf 'Python packages, Lua 5.1, and repak will continue after launch.\n\n'
   printf '%bState:%b %s\n' "$CYAN" "$RESET" "$state"
   printf 'Heartbeat: #%s  |  Last update: %s\n' "$heartbeat" "$updated_at"
@@ -172,24 +172,24 @@ setup_bootstrap() {
     termux-setup-storage || true
   fi
 
-  write_status running "Downloading PakForge repository" 35 3 "Downloading PakForge"
+  write_status running "Downloading Paktool repository" 35 3 "Downloading Paktool"
   if [ -d "$PROJECT/.git" ]; then
-    printf '%s\n' "[3/4] Updating existing PakForge files..."
-    run_with_heartbeat "Updating PakForge repository" 35 65 3 git -C "$PROJECT" pull --ff-only || return 1
+    printf '%s\n' "[3/4] Updating existing Paktool files..."
+    run_with_heartbeat "Updating Paktool repository" 35 65 3 git -C "$PROJECT" pull --ff-only || return 1
   else
     if [ -e "$PROJECT" ]; then
-      printf '%s\n' "PakForge directory exists but is not a Git checkout." >&2
+      printf '%s\n' "Paktool directory exists but is not a Git checkout." >&2
       return 1
     fi
-    printf '%s\n' "[3/4] Downloading PakForge..."
-    run_with_heartbeat "Downloading PakForge repository" 35 65 3 git clone --depth 1 "$REPO" "$PROJECT" || return 1
+    printf '%s\n' "[3/4] Downloading Paktool..."
+    run_with_heartbeat "Downloading Paktool repository" 35 65 3 git clone --filter=blob:none --sparse --depth 1 "$REPO" "$PROJECT" && git -C "$PROJECT" sparse-checkout set --no-cone /README.md /bootstrap.sh /install-termux.sh /paktool.py /paktool_core.py /paktool_support.py /paktool_first_run.py /paktool_setup.py /setup.sh /test_launcher.sh /update-termux.sh || return 1
   fi
 
-  write_status running "Creating PakForge launcher" 75 4 "Creating PakForge launcher"
-  printf '%s\n' "[4/4] Creating the PakForge launcher..."
+  write_status running "Creating Paktool launcher" 75 4 "Creating Paktool launcher"
+  printf '%s\n' "[4/4] Creating the Paktool launcher..."
   cd "$PROJECT"
-  run_with_heartbeat "Creating PakForge launcher" 75 95 4 bash -c 'chmod +x install-termux.sh ue4tool.py pakforge.py pakforge_setup.py pakforge_first_run.py update-termux.sh && PAKFORGE_DEFER_SETUP=1 SKIP_PACKAGES=1 bash install-termux.sh' || return 1
-  write_status ready "PakForge launcher is ready" 100 5 "PakForge launcher ready"
+  run_with_heartbeat "Creating Paktool launcher" 75 95 4 bash -c 'chmod +x install-termux.sh paktool.py paktool_support.py paktool_setup.py paktool_first_run.py update-termux.sh && PAKTOOL_DEFER_SETUP=1 SKIP_PACKAGES=1 bash install-termux.sh' || return 1
+  write_status ready "Paktool launcher is ready" 100 5 "Paktool launcher ready"
   return 0
 }
 
@@ -218,7 +218,7 @@ lock_is_stale() {
 }
 
 if [ -d "$BOOTSTRAP_LOCK" ] && lock_is_stale; then
-  printf '%s\n' 'Removing stale PakForge bootstrap lock and recovering setup.' >> "$BOOTSTRAP_LOG"
+  printf '%s\n' 'Removing stale Paktool bootstrap lock and recovering setup.' >> "$BOOTSTRAP_LOG"
   rm -rf "$BOOTSTRAP_LOCK"
 fi
 
@@ -244,8 +244,8 @@ while true; do
   state="$(sed -n 's/.*\"state\":\"\([^\"]*\)\".*/\1/p' "$BOOTSTRAP_STATUS" 2>/dev/null || true)"
   case "$state" in
     ready)
-      printf '%bPakForge is ready. Starting now.%b\n' "$GREEN" "$RESET"
-      exec "$PREFIX_DIR/bin/pakforge"
+      printf '%bPaktool is ready. Starting now.%b\n' "$GREEN" "$RESET"
+      exec "$PREFIX_DIR/bin/paktool"
       ;;
     failed)
       show_first_run

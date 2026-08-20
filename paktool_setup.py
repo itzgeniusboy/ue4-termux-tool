@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Transparent first-run dependency setup for PakForge.
+"""Transparent first-run dependency setup for Paktool.
 
 This helper intentionally uses only fixed-argument official package-manager,
 pip, and cargo commands. It never downloads or executes an arbitrary URL.
@@ -15,7 +15,7 @@ import sys
 import time
 from pathlib import Path
 
-STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "pakforge"
+STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "paktool"
 LOCK_DIR = STATE_DIR / "setup.lock"
 STATUS_FILE = STATE_DIR / "setup-status.json"
 LOG_FILE = STATE_DIR / "setup.log"
@@ -154,14 +154,14 @@ def perform_setup() -> int:
             "--locked", "--bin", "repak", "--no-default-features",
         ]
         if not _run("repak", cargo_command):
-            _log("WARN repak installation failed; native PakForge commands remain available")
+            _log("WARN repak installation failed; native Paktool commands remain available")
         _link_repak()
 
     final = _status()
     if not all(final["modules"].values()):
         _write_status("failed", error="Required Python modules are still missing", missing=final["modules"], stage="Required dependencies missing", stage_index=3, stage_total=SETUP_STAGE_TOTAL, percent=70)
         return 2
-    _write_status("ready", message="PakForge background setup completed", stage="Setup complete", stage_index=SETUP_STAGE_TOTAL, stage_total=SETUP_STAGE_TOTAL, percent=100)
+    _write_status("ready", message="Paktool background setup completed", stage="Setup complete", stage_index=SETUP_STAGE_TOTAL, stage_total=SETUP_STAGE_TOTAL, percent=100)
     return 0
 
 
@@ -188,7 +188,7 @@ def main(argv: list[str]) -> int:
         return 0
     if argv[:1] not in (["--background"], ["background"]):
         print(f"Setup log: {LOG_FILE}")
-        print("Usage: pakforge setup-status")
+        print("Usage: paktool setup-status")
         return 0
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     try:

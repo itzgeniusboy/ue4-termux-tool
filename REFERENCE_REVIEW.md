@@ -1,6 +1,6 @@
 # Reference Review
 
-The supplied `dravix.py` reference was reviewed for safe reliability and performance patterns before being considered for this tool.
+The supplied external reference implementation was reviewed for safe reliability and performance patterns before being considered for this tool.
 
 ## Decision
 
@@ -10,4 +10,4 @@ The reference's local-directory management and terminal display patterns were al
 
 ## Retained safe approach
 
-The tool continues to use the maintained `repak` executable for authorized PAK operations. Its safe performance improvements remain: a throttled detached update check, streamed Lua-file discovery, and content-only staging copies. These are covered by `test_smoke.py` and documented in `PERFORMANCE.md`.
+Paktool continues to use the maintained `repak` executable for authorized PAK operations. Its safe performance improvements remain: a throttled detached update check, streamed Lua-file discovery, and content-only staging copies. These are covered by `test_smoke.py` and documented in `PERFORMANCE.md`.

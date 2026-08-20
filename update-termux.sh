@@ -3,13 +3,13 @@ set -eu
 
 PROJECT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 cd "$PROJECT"
-printf '%s\n' "Checking for PakForge updates..."
+printf '%s\n' "Checking for Paktool updates..."
 
 dirty=0
 stash_name=""
 if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
   dirty=1
-  stash_name="pakforge-manual-update-$(date +%Y%m%d-%H%M%S)"
+  stash_name="paktool-manual-update-$(date +%Y%m%d-%H%M%S)"
   git stash push --include-untracked --message "$stash_name" >/dev/null
   printf '%s\n' "Local edits saved in git stash: $stash_name"
 fi
@@ -38,7 +38,7 @@ if git merge --ff-only --quiet origin/main; then
     exit 0
   fi
 else
-  backup_branch="pakforge-local-backup-$(date +%Y%m%d-%H%M%S)"
+  backup_branch="paktool-local-backup-$(date +%Y%m%d-%H%M%S)"
   if git branch "$backup_branch" "$before" >/dev/null 2>&1 && git reset --hard origin/main >/dev/null 2>&1; then
     printf '%s\n' "origin/main installed. Previous local commits preserved in branch: $backup_branch"
     if [ "$dirty" = "1" ]; then
@@ -53,6 +53,6 @@ else
 fi
 
 printf '%s\n' "New version found. Refreshing launchers..."
-chmod +x install-termux.sh ue4tool.py pakforge.py update-termux.sh pakforge_setup.py pakforge_first_run.py
-SKIP_PACKAGES=1 PAKFORGE_DEFER_SETUP=1 bash install-termux.sh
-printf '%s\n' "Update complete. Start with: pakforge"
+chmod +x install-termux.sh paktool.py paktool_setup.py paktool_first_run.py update-termux.sh update-termux.sh paktool_setup.py paktool_first_run.py
+SKIP_PACKAGES=1 PAKTOOL_DEFER_SETUP=1 bash install-termux.sh
+printf '%s\n' "Update complete. Start with: paktool"

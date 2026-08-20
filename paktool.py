@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""PakForge: a Termux PAK parser and repacking utility.
+"""Paktool: a Termux PAK parser and repacking utility.
 
-This adapter exposes the bundled parser through a stable CLI while keeping the
-repository's existing ``tool``/repak commands available separately.
+This is the single Paktool command-line interface for Termux PAK workflows.
 Use only with PAK files and project assets you own or are authorized to modify.
 """
 from __future__ import annotations
@@ -25,7 +24,7 @@ from pathlib import Path, PurePath
 
 
 try:
-    from pakforge_core import (
+    from paktool_core import (
         TencentPakFile,
         dump_unpacking_log,
         console,
@@ -44,23 +43,23 @@ try:
     )
 except ImportError as exc:
     raise SystemExit(
-        "PakForge dependencies are missing. Run: "
+        "Paktool dependencies are missing. Run: "
         "python3 -m pip install rich pytz gmalg pycryptodome zstandard"
     ) from exc
 
-APP_NAME = "PakForge"
+APP_NAME = "Paktool"
 VERSION = "1.4.0"
-MANIFEST_NAME = ".pakforge-manifest.json"
-CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "pakforge"
+MANIFEST_NAME = ".paktool-manifest.json"
+CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "paktool"
 PROFILE_DIRECTORY = CONFIG_HOME / "profiles"
 
 
 def native_log_directory() -> Path:
-    return Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "pakforge" / "logs"
+    return Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "paktool" / "logs"
 
 
 class NativeOperationLog:
-    """Local JSONL operation log for the native PakForge CLI."""
+    """Local JSONL operation log for the native Paktool CLI."""
 
     def __init__(self, command: str, args: argparse.Namespace):
         self.path: Path | None = None
@@ -230,7 +229,7 @@ def profile_path(name: str) -> Path:
 def load_profile(name: str) -> dict:
     path = profile_path(name)
     if not path.is_file():
-        raise SystemExit(f"Profile not found: {name}. Use: pakforge profile list")
+        raise SystemExit(f"Profile not found: {name}. Use: paktool profile list")
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -528,7 +527,7 @@ def lua_pipeline_command(args: argparse.Namespace) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     backup = backup_file(output) if getattr(args, "backup", False) else None
     report["backup"] = str(backup) if backup else None
-    staging = tempfile.TemporaryDirectory(prefix="pakforge-lua-") if getattr(args, "compile_lua", False) else None
+    staging = tempfile.TemporaryDirectory(prefix="paktool-lua-") if getattr(args, "compile_lua", False) else None
     try:
         pack_root = lua_root
         if staging is not None:
@@ -582,7 +581,7 @@ def build_command(args: argparse.Namespace) -> None:
     lua_value = args.lua_dir or profile.get("lua_dir")
     output_value = args.output or profile.get("output")
     if not pak_value or not lua_value or not output_value:
-        raise SystemExit("Build profile needs pak, lua_dir, and output. Set them with `pakforge profile init` or pass command options.")
+        raise SystemExit("Build profile needs pak, lua_dir, and output. Set them with `paktool profile init` or pass command options.")
     pak_path = Path(str(pak_value)).expanduser()
     lua_dir = Path(str(lua_value)).expanduser()
     output = Path(str(output_value)).expanduser()
@@ -660,10 +659,10 @@ def info_command(args: argparse.Namespace) -> None:
 def find_unluac_decompiler() -> Path | None:
     """Find the optional patched unluac JAR in SOURCE or the system PATH.
 
-    PakForge never downloads a decompiler automatically. Keeping the JAR
+    Paktool never downloads a decompiler automatically. Keeping the JAR
     optional preserves ordinary unpacking when Java or unluac is unavailable.
     """
-    configured = os.environ.get("PAKFORGE_UNLUAC_JAR")
+    configured = os.environ.get("PAKTOOL_UNLUAC_JAR")
     candidates: list[Path] = []
     if configured:
         candidates.append(Path(configured).expanduser())
@@ -705,7 +704,7 @@ def _decompile_luac_file(luac_path: Path, decompiler: Path, timeout: float = 30.
     staged_path: Path | None = None
     try:
         normalized_data = normalize_tencent_lua_bytecode(luac_path.read_bytes())
-        with tempfile.NamedTemporaryFile(prefix="pakforge-lua-", suffix=".luac", delete=False) as staged:
+        with tempfile.NamedTemporaryFile(prefix="paktool-lua-", suffix=".luac", delete=False) as staged:
             staged.write(normalized_data)
             staged_path = Path(staged.name)
         with lua_output.open("w", encoding="utf-8", newline="") as output_handle:
@@ -739,28 +738,28 @@ def decompile_extracted_lua(output_root: Path, timeout: float = 30.0) -> dict[st
     luac_files = sorted(path for path in output_root.rglob("*") if path.is_file() and path.suffix.lower() == ".luac")
     result = {"found": len(luac_files), "decompiled": 0, "fallback": 0}
     if not luac_files:
-        print("[PakForge] [INFO] No .luac files found; decompilation skipped.")
+        print("[Paktool] [INFO] No .luac files found; decompilation skipped.")
         return result
 
     decompiler = find_unluac_decompiler()
     if decompiler is None:
-        print("[PakForge] [WARN] unluac_patched.jar not found in SOURCE or PATH; keeping raw .luac files.", file=sys.stderr)
+        print("[Paktool] [WARN] unluac_patched.jar not found in SOURCE or PATH; keeping raw .luac files.", file=sys.stderr)
         result["fallback"] = len(luac_files)
         return result
     if shutil.which("java") is None:
-        print("[PakForge] [WARN] Java runtime not found; keeping raw .luac files.", file=sys.stderr)
+        print("[Paktool] [WARN] Java runtime not found; keeping raw .luac files.", file=sys.stderr)
         result["fallback"] = len(luac_files)
         return result
 
-    print(f"[PakForge] [INFO] Decompiling {len(luac_files)} Lua bytecode file(s) with {decompiler}...")
+    print(f"[Paktool] [INFO] Decompiling {len(luac_files)} Lua bytecode file(s) with {decompiler}...")
     for luac_path in luac_files:
         success, detail = _decompile_luac_file(luac_path, decompiler, timeout=timeout)
         if success:
             result["decompiled"] += 1
-            print(f"[PakForge] [OK] Decompiled: {detail}")
+            print(f"[Paktool] [OK] Decompiled: {detail}")
         else:
             result["fallback"] += 1
-            print(f"[PakForge] [WARN] Kept raw bytecode for {luac_path}: {detail}", file=sys.stderr)
+            print(f"[Paktool] [WARN] Kept raw bytecode for {luac_path}: {detail}", file=sys.stderr)
     return result
 
 
@@ -817,7 +816,7 @@ def auto_command(args: argparse.Namespace) -> None:
     }
 
     try:
-        with tempfile.TemporaryDirectory(prefix="pakforge-auto-") as temporary_name:
+        with tempfile.TemporaryDirectory(prefix="paktool-auto-") as temporary_name:
             temporary_root = Path(temporary_name)
             unpacked_root = temporary_root / "unpacked"
 
@@ -848,8 +847,8 @@ def auto_command(args: argparse.Namespace) -> None:
                 interactive_edit_dir = unpacked_root / target_prefix
                 interactive_edit_dir.mkdir(parents=True, exist_ok=True)
                 print(
-                    f"[PakForge] Edit the decompiled Lua files in: {interactive_edit_dir}\n"
-                    "[PakForge] Press Enter here when your offline edits are complete."
+                    f"[Paktool] Edit the decompiled Lua files in: {interactive_edit_dir}\n"
+                    "[Paktool] Press Enter here when your offline edits are complete."
                 )
                 try:
                     input()
@@ -948,9 +947,9 @@ def auto_command(args: argparse.Namespace) -> None:
                 }
             )
             _write_auto_report(report_path, report)
-            print(f"[PakForge] Auto pipeline complete: {count} file(s) repacked and verified.")
-            print(f"[PakForge] Output: {output}")
-            print(f"[PakForge] Report: {report_path}")
+            print(f"[Paktool] Auto pipeline complete: {count} file(s) repacked and verified.")
+            print(f"[Paktool] Output: {output}")
+            print(f"[Paktool] Report: {report_path}")
     except (Exception, SystemExit) as exc:
         report.update(
             {
@@ -1037,7 +1036,7 @@ def normalize_target_prefix(value: str | None) -> str | None:
 def _find_lua51_compiler() -> str | None:
     """Find an explicitly configured or PATH-provided Lua 5.1 compiler."""
     candidates = []
-    configured = os.environ.get('PAKFORGE_LUAC51')
+    configured = os.environ.get('PAKTOOL_LUAC51')
     if configured:
         candidates.append(configured)
     # Keep the version-specific names ahead of generic ``luac``.  Lua bytecode
@@ -1060,14 +1059,14 @@ def find_lua51_compiler() -> str:
     compiler = _find_lua51_compiler()
     if compiler:
         return compiler
-    if os.environ.get('PAKFORGE_ALLOW_NON51_LUAC') == '1':
+    if os.environ.get('PAKTOOL_ALLOW_NON51_LUAC') == '1':
         fallback = shutil.which('luac')
         if fallback:
             return str(Path(fallback).resolve())
     raise SystemExit(
         'Lua 5.1 compiler not found. Run the Lua pipeline with its automatic '
         'installer enabled, install luac5.1/luac51 using your official package '
-        'manager, or set PAKFORGE_LUAC51=/absolute/path/to/luac5.1.'
+        'manager, or set PAKTOOL_LUAC51=/absolute/path/to/luac5.1.'
     )
 
 
@@ -1078,7 +1077,7 @@ def _manual_lua51_instruction(manager: str | None = None) -> str:
         'pacman': 'sudo pacman -S lua51 --noconfirm',
     }
     command = instructions.get(manager or '', 'Install Lua 5.1 using your operating system package manager')
-    return f'Lua 5.1 compiler is still unavailable. Run: {command}, then rerun `pakforge lua-pipeline --compile-lua`.'
+    return f'Lua 5.1 compiler is still unavailable. Run: {command}, then rerun `paktool lua-pipeline --compile-lua`.'
 
 
 def ensure_lua51_installed() -> str:
@@ -1103,7 +1102,7 @@ def ensure_lua51_installed() -> str:
 
     if manager is None:
         message = _manual_lua51_instruction()
-        print(f'[PakForge] [ERROR] {message}', file=sys.stderr)
+        print(f'[Paktool] [ERROR] {message}', file=sys.stderr)
         raise SystemExit(2)
 
     if manager == 'pkg':
@@ -1114,7 +1113,7 @@ def ensure_lua51_installed() -> str:
             sudo = shutil.which('sudo')
             if not sudo:
                 message = _manual_lua51_instruction('apt') + ' `sudo` was not found; run it as root or install sudo.'
-                print(f'[PakForge] [ERROR] {message}', file=sys.stderr)
+                print(f'[Paktool] [ERROR] {message}', file=sys.stderr)
                 raise SystemExit(2)
             command.insert(0, sudo)
     else:
@@ -1123,30 +1122,30 @@ def ensure_lua51_installed() -> str:
             sudo = shutil.which('sudo')
             if not sudo:
                 message = _manual_lua51_instruction('pacman') + ' `sudo` was not found; run it as root or install sudo.'
-                print(f'[PakForge] [ERROR] {message}', file=sys.stderr)
+                print(f'[Paktool] [ERROR] {message}', file=sys.stderr)
                 raise SystemExit(2)
             command.insert(0, sudo)
 
-    print(f'[PakForge] [INFO] Lua 5.1 compiler not found. Installing via {manager}...')
-    print(f'[PakForge] [INFO] Command: {shlex.join(command)}')
+    print(f'[Paktool] [INFO] Lua 5.1 compiler not found. Installing via {manager}...')
+    print(f'[Paktool] [INFO] Command: {shlex.join(command)}')
     try:
         completed = subprocess.run(command, check=False)
     except OSError as exc:
-        print(f'[PakForge] [ERROR] Could not start {manager}: {exc}', file=sys.stderr)
-        print(f'[PakForge] [HELP] {_manual_lua51_instruction(manager)}', file=sys.stderr)
+        print(f'[Paktool] [ERROR] Could not start {manager}: {exc}', file=sys.stderr)
+        print(f'[Paktool] [HELP] {_manual_lua51_instruction(manager)}', file=sys.stderr)
         raise SystemExit(2) from exc
 
     compiler = _find_lua51_compiler()
     if completed.returncode == 0 and compiler:
-        print('[PakForge] [OK] Lua 5.1 compiler installation successful.')
+        print('[Paktool] [OK] Lua 5.1 compiler installation successful.')
         return compiler
 
     print(
-        f'[PakForge] [ERROR] {manager} exited with status {completed.returncode}; '
+        f'[Paktool] [ERROR] {manager} exited with status {completed.returncode}; '
         'luac5.1/luac51 is still unavailable.',
         file=sys.stderr,
     )
-    print(f'[PakForge] [HELP] {_manual_lua51_instruction(manager)}', file=sys.stderr)
+    print(f'[Paktool] [HELP] {_manual_lua51_instruction(manager)}', file=sys.stderr)
     raise SystemExit(2)
 
 
@@ -1253,7 +1252,7 @@ def _menu_workspace(data_path: Path, pak_file: Path) -> tuple[Path, Path, Path]:
 
 
 def _menu_run(arguments: list[str]) -> None:
-    """Run an existing PakForge CLI command from the central UI."""
+    """Run an existing Paktool CLI command from the central UI."""
     console.print(f"[bold {NEON['blue']}]Running selected workflow...[/bold {NEON['blue']}]")
     result = subprocess.run([sys.executable, str(Path(__file__).resolve()), *arguments], check=False)
     if result.returncode:
@@ -1268,14 +1267,14 @@ def _menu_guided(data_path: Path) -> None:
     main_menu()
 
 
-def pakforge_control_center() -> None:
-    """Provide one central interactive UI for all common PakForge workflows."""
+def paktool_control_center() -> None:
+    """Provide one central interactive UI for all common Paktool workflows."""
     data_path = Path(__file__).resolve().parent
     while True:
         print_banner()
         menu = Table(show_header=False, box=ROUNDED, border_style=NEON['purple'], padding=(0, 2), expand=False)
         menu.add_column("Key", style=f"bold {NEON['cyan']}", width=5, justify="center")
-        menu.add_column("PakForge control", style="bold white")
+        menu.add_column("Paktool control", style="bold white")
         menu.add_row("1", "Guided PAK workflow  •  auto unpack / repack")
         menu.add_row("2", "Inspect PAK  •  metadata / capabilities / hashes")
         menu.add_row("3", "Unpack PAK  •  optional Lua decompile")
@@ -1284,8 +1283,8 @@ def pakforge_control_center() -> None:
         menu.add_row("6", "Auto pipeline  •  unpack → edit → compile → repack")
         menu.add_row("7", "Setup status / logs / diagnostics")
         menu.add_row("0", "Exit")
-        console.print(Panel(menu, title=f"[bold {NEON['pink']}]PAKFORGE CONTROL CENTER[/bold {NEON['pink']}]", border_style=NEON['blue'], box=ROUNDED, expand=False))
-        console.print(f"[bold {NEON['muted']}]One UI controls the complete PakForge workflow. Advanced CLI flags remain available.[/bold {NEON['muted']}]")
+        console.print(Panel(menu, title=f"[bold {NEON['pink']}]PAKTOOL CONTROL CENTER[/bold {NEON['pink']}]", border_style=NEON['blue'], box=ROUNDED, expand=False))
+        console.print(f"[bold {NEON['muted']}]One UI controls the complete Paktool workflow. Advanced CLI flags remain available.[/bold {NEON['muted']}]")
         choice = safe_input(f"[bold {NEON['cyan']}]SELECT ACTION:[/bold {NEON['cyan']}] ").strip().lower()
 
         if choice == "1":
@@ -1338,13 +1337,13 @@ def pakforge_control_center() -> None:
                     _menu_run(["auto", "--pak", str(pak), "--edit-dir", str(lua_dir), "--output", str(output), "--target-prefix", "Content/Lua"])
             _menu_pause()
         elif choice == "7":
-            setup_script = Path(__file__).with_name("pakforge_setup.py")
+            setup_script = Path(__file__).with_name("paktool_setup.py")
             if setup_script.is_file():
                 subprocess.run([sys.executable, str(setup_script), "--status"], check=False)
             _menu_run(["logs", "--tail", "20"])
             _menu_pause()
         elif choice == "0":
-            console.print(f"[bold {NEON['pink']}]PakForge closed.[/bold {NEON['pink']}]")
+            console.print(f"[bold {NEON['pink']}]Paktool closed.[/bold {NEON['pink']}]")
             return
         else:
             console.print(f"[bold {NEON['red']}]Unknown action. Choose a digit from 0 to 7.[/bold {NEON['red']}]")
@@ -1352,10 +1351,10 @@ def pakforge_control_center() -> None:
 
 
 def parser() -> argparse.ArgumentParser:
-    cli = argparse.ArgumentParser(prog="pakforge", description="PakForge Termux PAK parser and repacking utility")
-    cli.add_argument("--version", action="version", version=f"PakForge {VERSION}")
+    cli = argparse.ArgumentParser(prog="paktool", description="Paktool Termux PAK parser and repacking utility")
+    cli.add_argument("--version", action="version", version=f"Paktool {VERSION}")
     sub = cli.add_subparsers(dest="command")
-    sub.add_parser("menu", help="open the unified PakForge control center")
+    sub.add_parser("menu", help="open the unified Paktool control center")
 
     profile = sub.add_parser("profile", help="create and manage reusable developer build profiles")
     profile_actions = profile.add_subparsers(dest="profile_action", required=True)
@@ -1494,7 +1493,7 @@ def parser() -> argparse.ArgumentParser:
     verify.add_argument("--manifest")
     verify.set_defaults(func=verify_command)
 
-    logs = sub.add_parser("logs", help="list structured PakForge operation logs")
+    logs = sub.add_parser("logs", help="list structured Paktool operation logs")
     logs.add_argument("--limit", type=int, default=10)
     logs.add_argument("--tail", type=int, default=0)
     logs.set_defaults(func=show_native_logs)

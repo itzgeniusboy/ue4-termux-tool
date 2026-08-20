@@ -8,19 +8,19 @@ import subprocess
 import sys
 import tempfile
 
-from ue4tool import OperationLog, ToolError, create_manifest, pak_info, verify_manifest, refuse_existing_output
+from paktool_support import OperationLog, ToolError, create_manifest, pak_info, verify_manifest, refuse_existing_output
 
 ROOT = Path(__file__).resolve().parent
-TOOL = ROOT / "ue4tool.py"
+TOOL = ROOT / "paktool_support.py"
 
-with tempfile.TemporaryDirectory(prefix="ue4tool-power-test-") as tmp:
+with tempfile.TemporaryDirectory(prefix="paktool_support-power-test-") as tmp:
     base = Path(tmp)
     files = base / "files"
     (files / "nested").mkdir(parents=True)
     (files / "nested/data.txt").write_text("power test\n", encoding="utf-8")
 
     manifest = create_manifest(files)
-    assert manifest.name == ".dravix-manifest.json"
+    assert manifest.name == ".paktool-manifest.json"
     ok, issues = verify_manifest(files)
     assert ok and not issues
 
@@ -73,8 +73,8 @@ else:
     (pak_dir / "two.pak").write_bytes(b"two")
     batch_out = base / "batch-out"
     env = os.environ.copy()
-    env["TOOL_NO_AUTO_RETRY"] = "1"
-    env["TOOL_NO_REPORT"] = "1"
+    env["PAKTOOL_NO_AUTO_RETRY"] = "1"
+    env["PAKTOOL_NO_REPORT"] = "1"
     subprocess.run(
         [sys.executable, str(TOOL), "batch-unpack", str(pak_dir), str(batch_out), "--repak", str(fake_repak)],
         check=True,

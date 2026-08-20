@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO="https://github.com/itzgeniusboy/ue4-termux-tool.git"
-PROJECT="$HOME/ue4-termux-tool"
+PROJECT="$HOME/paktool"
 
 fail() {
   printf '%s\n' "Setup failed: $1" >&2
@@ -35,25 +35,17 @@ else
     || fail "Could not download the public repository."
 
   sparse_paths=(
-    "/.ue4-bug-relay"
-    "/PAK/"
-    "/PAK TOOL/"
-    "/REPACK/"
-    "/RESULT/"
-    "/UNPACK/"
-    "/PAKFORGE_SDCARD_MENU_SNIPPET.md"
-    "/PERFORMANCE.md"
+
     "/README.md"
-    "/REFERENCE_REVIEW.md"
     "/bootstrap.sh"
     "/install-termux.sh"
-    "/pakforge.py"
-    "/pakforge_core.py"
-    "/pakforge_first_run.py"
-    "/pakforge_setup.py"
+    "/paktool.py"
+    "/paktool_core.py"
+    "/paktool_support.py"
+    "/paktool_first_run.py"
+    "/paktool_setup.py"
     "/setup.sh"
     "/test_launcher.sh"
-    "/ue4tool.py"
     "/update-termux.sh"
   )
   if ! git -C "$PROJECT" sparse-checkout set --no-cone "${sparse_paths[@]}"; then
@@ -63,16 +55,15 @@ fi
 
 cd "$PROJECT"
 printf '%s\n' "[5/5] Installing repak and the tool command..."
-chmod +x install-termux.sh ue4tool.py pakforge.py update-termux.sh
+chmod +x install-termux.sh paktool.py paktool_support.py paktool_setup.py paktool_first_run.py update-termux.sh
 SKIP_PACKAGES=1 bash install-termux.sh
 
 export PATH="${PREFIX:-/data/data/com.termux/files/usr}/bin:$PATH"
 command -v repak >/dev/null 2>&1 || fail "repak was not installed."
-command -v tool >/dev/null 2>&1 || fail "tool command was not installed."
-command -v pakforge >/dev/null 2>&1 || fail "pakforge command was not installed."
+command -v paktool >/dev/null 2>&1 || fail "paktool command was not installed."
 
 printf '%s\n' ""
 printf '%s\n' "Installation complete."
-printf '%s\n' "Open PakForge by typing: pakforge"
-printf '%s\n' "The original repak wrapper remains available as: tool"
+printf '%s\n' "Open Paktool by typing: paktool"
+
 printf '%s\n' "If Android storage permission was requested, press Allow and run tool again."
