@@ -7,8 +7,8 @@ BIN_DIR="$PREFIX/bin"
 
 pkg update -y
 pkg install -y python python-pip git
-python -m pip install --upgrade pip
-python -m pip install rich pytz gmalg pycryptodome zstandard
+# Termux owns the python-pip package; never replace or upgrade pip itself.
+python -m pip install --no-cache-dir rich pytz gmalg pycryptodome zstandard
 
 if [ ! -d "$INSTALL_DIR/.git" ]; then
   rm -rf "$INSTALL_DIR"

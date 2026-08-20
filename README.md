@@ -26,6 +26,8 @@ hash -r
 tool --help
 ```
 
+The installer does not upgrade or replace Termux's protected `python-pip` package; it installs only the Paktool dependencies.
+
 The default workspace is:
 
 | Folder | Purpose |
@@ -97,4 +99,4 @@ The values are used internally for supported UE4 encrypted PAK metadata and are 
 
 ## Troubleshooting
 
-If `tool` is not found after installation, run `hash -r` or restart Termux. If storage access fails, run `termux-setup-storage` and grant the Android permission. If a PAK cannot be parsed, confirm that it is a supported UE4/Tencent PAK and that the correct `--is-od` mode and authorized project keys are being used.
+If the installer previously stopped with `Installing pip is forbidden`, simply run the corrected bootstrap command again; the old partial install does not need to be removed. If `tool` is not found after installation, run `hash -r` or restart Termux. If storage access fails, run `termux-setup-storage` and grant the Android permission. If a PAK cannot be parsed, confirm that it is a supported UE4/Tencent PAK and that the correct `--is-od` mode and authorized project keys are being used.
