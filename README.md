@@ -227,6 +227,41 @@ tool delete \
   --is-od
 ```
 
+## OpenCode-style one-command launcher
+
+The installer also provides `paktool-opencode`. This command starts the OpenCode-style terminal UI immediately and starts the optional OpenCode/dependency setup in the background. On first launch it shows the OpenCode authentication page and can open it in the Android browser.
+
+Run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/itzgeniusboy/pak-unpacker-termux/main/bootstrap.sh | bash
+export PATH="$HOME/.local/bin:$HOME/bin:$PREFIX/bin:$PATH"
+hash -r
+paktool-opencode
+```
+
+The first-run flow is:
+
+| Step | What happens |
+|---|---|
+| 1 | The launcher opens `https://opencode.ai/auth` or prints the link. |
+| 2 | In the actual OpenCode TUI, use `/connect`, select a provider, and paste the provider API key when prompted. |
+| 3 | In the background, Termux packages, Python dependencies, Node.js, and the optional OpenCode CLI are checked/installed. |
+| 4 | The PAK menu opens with `info`, `unpack`, `repack`, and `delete` actions. |
+
+The API key is handled by OpenCode's own local authentication flow; Paktool does not print, upload, or commit it. The setup log is stored at `~/.cache/pak-unpacker-termux/setup.log`.
+
+You can launch the actual OpenCode TUI from the menu, or check the setup log directly:
+
+```bash
+paktool-opencode
+cat ~/.cache/pak-unpacker-termux/setup.log
+command -v opencode
+opencode --version
+```
+
+Native OpenCode binaries may not run on every Android/Termux architecture because Linux binaries and Android's Bionic environment are different. If the native OpenCode runtime check fails, the PAK menu remains available and the tool does not stop. Do not paste an API key into shell history or a public repository.
+
 ## SM4 configuration
 
 The native UE4 parser includes the supplied project-specific derivation values under these names:

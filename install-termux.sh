@@ -23,7 +23,10 @@ cat > "$BIN_DIR/tool" <<EOF
 exec python "$INSTALL_DIR/paktool.py" "\$@"
 EOF
 chmod +x "$BIN_DIR/tool" "$INSTALL_DIR/paktool.py"
-mkdir -p "$HOME/storage/shared/Paktool/PAK" "$HOME/storage/shared/Paktool/UNPACKED" "$HOME/storage/shared/Paktool/MODDED"
+cp "$INSTALL_DIR/paktool-opencode.sh" "$BIN_DIR/paktool-opencode"
+chmod +x "$BIN_DIR/paktool-opencode" "$INSTALL_DIR/paktool-opencode.sh" "$INSTALL_DIR/opencode-setup.sh" "$INSTALL_DIR/paktool_ui.py"
+mkdir -p "$HOME/storage/shared/Paktool/PAK" "$HOME/storage/shared/Paktool/EDIT" "$HOME/storage/shared/Paktool/UNPACKED" "$HOME/storage/shared/Paktool/MODDED"
 
 echo "Installed successfully. Try: tool --help"
+echo "OpenCode launcher: paktool-opencode"
 echo "PAK workspace: $HOME/storage/shared/Paktool/"
