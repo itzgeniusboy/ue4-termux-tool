@@ -188,7 +188,7 @@ def main(argv: list[str]) -> int:
         return 0
     if argv[:1] not in (["--background"], ["background"]):
         print(f"Setup log: {LOG_FILE}")
-        print("Usage: paktool setup-status")
+        print("Usage: tool setup-status")
         return 0
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     try:

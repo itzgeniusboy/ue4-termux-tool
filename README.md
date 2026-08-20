@@ -17,7 +17,7 @@ The launcher opens immediately. Minimum Termux packages and the Paktool source a
 After setup, the normal command is:
 
 ```bash
-paktool
+tool
 ```
 
 The launcher synchronizes `origin/main` before opening the latest Paktool UI. Set `PAKTOOL_NO_UPDATE=1` to skip that synchronization for one launch. Set `PAKTOOL_NO_SETUP=1` to skip background dependency setup. Use `PAKTOOL_PLAIN=1` or `NO_COLOR=1` for plain output.
@@ -33,7 +33,7 @@ Paktool creates this workspace automatically when the command starts:
 | `/sdcard/Paktool/UNPACKED/` | Extracted PAK contents |
 | `/sdcard/Paktool/MODDED/` | Repacked PAK outputs |
 
-If Android storage access has not been enabled, run `termux-setup-storage` once and then start `paktool` again.
+If Android storage access has not been enabled, run `termux-setup-storage` once and then start `tool` again.
 
 ## Beginner menu
 
@@ -51,22 +51,22 @@ SELECT (1-4):
 
 ## Developer commands
 
-The same `paktool` executable retains advanced command-line workflows for maintainers and authorized project developers:
+The same `tool` executable retains advanced command-line workflows for maintainers and authorized project developers:
 
 ```bash
-paktool --help
-paktool info <input.pak>
-paktool unpack <input.pak> <output-directory>
-paktool repack <input-directory> <output.pak>
-paktool lua-pipeline --help
-paktool auto --help
-paktool profile --help
-paktool doctor --help
-paktool diff --help
-paktool build --help
-paktool setup-status
-paktool update-status
-paktool logs --tail 30
+tool --help
+tool info <input.pak>
+tool unpack <input.pak> <output-directory>
+tool repack <input-directory> <output.pak>
+tool lua-pipeline --help
+tool auto --help
+tool profile --help
+tool doctor --help
+tool diff --help
+tool build --help
+tool setup-status
+tool update-status
+tool logs --tail 30
 ```
 
 The native backend supports UE/Tencent PAK versions 7 through 12+, path-safety checks, AES/SM4/SIMPLE handling when the authorized key is supplied, ZLIB/ZSTD and optional Oodle support, parallel I/O with a safe single-threaded fallback, Lua 5.1 compiler detection, optional Lua decompilation, full repacking, patch mode, and post-repack verification. Exact support depends on the source PAK and available local dependencies.

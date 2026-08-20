@@ -129,7 +129,7 @@ def read_key(timeout: float = 0.5) -> str | None:
 
 def main(argv: list[str]) -> int:
     if "--script" not in argv:
-        print("Setup is still running. Check: paktool setup-status")
+        print("Setup is still running. Check: tool setup-status")
         return 2
     script_index = argv.index("--script")
     if script_index + 1 >= len(argv):

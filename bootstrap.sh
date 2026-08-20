@@ -245,7 +245,7 @@ while true; do
   case "$state" in
     ready)
       printf '%bPaktool is ready. Starting now.%b\n' "$GREEN" "$RESET"
-      exec "$PREFIX_DIR/bin/paktool"
+      exec "$PREFIX_DIR/bin/tool"
       ;;
     failed)
       show_first_run

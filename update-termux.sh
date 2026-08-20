@@ -55,4 +55,4 @@ fi
 printf '%s\n' "New version found. Refreshing launchers..."
 chmod +x install-termux.sh paktool.py paktool_setup.py paktool_first_run.py update-termux.sh update-termux.sh paktool_setup.py paktool_first_run.py
 SKIP_PACKAGES=1 PAKTOOL_DEFER_SETUP=1 bash install-termux.sh
-printf '%s\n' "Update complete. Start with: paktool"
+printf '%s\n' "Update complete. Start with: tool"

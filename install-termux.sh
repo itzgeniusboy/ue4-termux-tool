@@ -27,7 +27,7 @@ else
   fi
 
   # Cargo installs executables in ~/.cargo/bin, which is not always present in
-  # an existing Termux shell PATH. Put a stable shim in $PREFIX/bin so `paktool`
+  # an existing Termux shell PATH. Put a stable shim in $PREFIX/bin so `tool`
   # and future Termux sessions can always find the binary.
   if [ ! -x "$REPAK_CARGO_BIN" ]; then
     printf '%s\n' "Error: repak was installed but not found at $REPAK_CARGO_BIN." >&2
@@ -49,15 +49,15 @@ printf '%s\n' "[4/5] Installing Paktool command..."
 # This prevents an older PakForge/UE4 launcher earlier in PATH from shadowing
 # the fresh Paktool command while leaving unrelated user commands untouched.
 LEGACY_MARKER_RE='PakForge|pakforge|UE4 TERMUX TOOL|ue4tool.py|featuresticleak'
-for candidate in "$HOME/.local/bin/paktool" "$HOME/bin/paktool" "$BIN_DIR/paktool"; do
-  if [ -f "$candidate" ] && [ "$candidate" != "$BIN_DIR/paktool" ] && grep -Eiq "$LEGACY_MARKER_RE" "$candidate" 2>/dev/null; then
+for candidate in "$HOME/.local/bin/tool" "$HOME/bin/tool" "$BIN_DIR/tool"; do
+  if [ -f "$candidate" ] && [ "$candidate" != "$BIN_DIR/tool" ] && grep -Eiq "$LEGACY_MARKER_RE" "$candidate" 2>/dev/null; then
     printf '%s\n' "Replacing stale Paktool launcher: $candidate"
     rm -f "$candidate"
-    ln -s "$BIN_DIR/paktool" "$candidate"
+    ln -s "$BIN_DIR/tool" "$candidate"
   fi
 done
 rm -f "$BIN_DIR/paktool_support" "$BIN_DIR/pakforge" "$BIN_DIR/tool" "$BIN_DIR/ue4tool" "$BIN_DIR/paktool"
-cat > "$BIN_DIR/paktool" <<EOF
+cat > "$BIN_DIR/tool" <<EOF
 #!/data/data/com.termux/files/usr/bin/bash
 set -euo pipefail
 SCRIPT_DIR="$SCRIPT_DIR"
@@ -181,16 +181,16 @@ fi
 
 exec python3 "\$SCRIPT_DIR/paktool.py" "\$@"
 EOF
-chmod 0755 "$BIN_DIR/paktool"
+chmod 0755 "$BIN_DIR/tool"
 
 printf '%s\n' "[5/5] Verifying installation..."
 if [ "${PAKTOOL_DEFER_SETUP:-0}" != "1" ]; then
   command -v repak >/dev/null 2>&1 || { printf '%s\n' "Error: repak is not available in PATH." >&2; exit 1; }
 fi
-command -v "$BIN_DIR/paktool" >/dev/null 2>&1 || { printf '%s\n' "Error: paktool command was not installed." >&2; exit 1; }
-if ! grep -Fq 'exec python3 "$SCRIPT_DIR/paktool.py"' "$BIN_DIR/paktool"; then
-  printf '%s\n' "Error: installed paktool launcher does not point to Paktool." >&2
+command -v "$BIN_DIR/tool" >/dev/null 2>&1 || { printf '%s\n' "Error: tool command was not installed." >&2; exit 1; }
+if ! grep -Fq 'exec python3 "$SCRIPT_DIR/paktool.py"' "$BIN_DIR/tool"; then
+  printf '%s\n' "Error: installed tool launcher does not point to Paktool." >&2
   exit 1
 fi
-printf '%s\n' "Paktool command installed at: $BIN_DIR/paktool"
-printf '%s\n' "Done. Run: paktool"
+printf '%s\n' "Tool command installed at: $BIN_DIR/tool"
+printf '%s\n' "Done. Run: tool"

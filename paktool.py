@@ -231,7 +231,7 @@ def profile_path(name: str) -> Path:
 def load_profile(name: str) -> dict:
     path = profile_path(name)
     if not path.is_file():
-        raise SystemExit(f"Profile not found: {name}. Use: paktool profile list")
+        raise SystemExit(f"Profile not found: {name}. Use: tool profile list")
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -640,7 +640,7 @@ def build_command(args: argparse.Namespace) -> None:
     lua_value = args.lua_dir or profile.get("lua_dir")
     output_value = args.output or profile.get("output")
     if not pak_value or not lua_value or not output_value:
-        raise SystemExit("Build profile needs pak, lua_dir, and output. Set them with `paktool profile init` or pass command options.")
+        raise SystemExit("Build profile needs pak, lua_dir, and output. Set them with `tool profile init` or pass command options.")
     pak_path = Path(str(pak_value)).expanduser()
     lua_dir = Path(str(lua_value)).expanduser()
     output = Path(str(output_value)).expanduser()
@@ -1182,7 +1182,7 @@ def _manual_lua51_instruction(manager: str | None = None) -> str:
         'pacman': 'sudo pacman -S lua51 --noconfirm',
     }
     command = instructions.get(manager or '', 'Install Lua 5.1 using your operating system package manager')
-    return f'Lua 5.1 compiler is still unavailable. Run: {command}, then rerun `paktool lua-pipeline --compile-lua`.'
+    return f'Lua 5.1 compiler is still unavailable. Run: {command}, then rerun `tool lua-pipeline --compile-lua`.'
 
 
 def ensure_lua51_installed() -> str:

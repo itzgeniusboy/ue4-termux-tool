@@ -32,8 +32,9 @@ installer_text = (ROOT / "install-termux.sh").read_text(encoding="utf-8")
 assert 'CARGO_BIN_DIR="${CARGO_HOME:-$HOME/.cargo}/bin"' in installer_text
 assert 'ln -sf "$REPAK_CARGO_BIN" "$BIN_DIR/repak"' in installer_text
 assert 'export PATH="$BIN_DIR:$CARGO_BIN_DIR:$PATH"' in installer_text
-assert installer_text.count('cat > "$BIN_DIR/paktool"') == 1
-assert 'Error: tool command was not installed.' not in installer_text
+assert installer_text.count('cat > "$BIN_DIR/tool"') == 1
+assert 'Error: tool command was not installed.' in installer_text
+assert 'Done. Run: tool' in installer_text
 
 assert "DEFAULT_UPDATE_INTERVAL_SECONDS = 6 * 60 * 60" in source_text
 assert "paktool-update.last-success" in source_text

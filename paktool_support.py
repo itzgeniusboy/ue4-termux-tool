@@ -2,7 +2,7 @@
 """Friendly UE4 Termux helper for authorized projects.
 
 The tool supports PAK unpacking, PAK repacking, and Lua injection. Running
-`paktool` without a subcommand opens a guided menu.
+`tool` without a subcommand opens a guided menu.
 """
 from __future__ import annotations
 
@@ -569,7 +569,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=APP_NAME, description="Friendly UE4 PAK unpack, repack, and Lua inject tool for Termux")
     sub = parser.add_subparsers(dest="command")
 
-    p = sub.add_parser("unpack", help="extract a UE4 PAK; usage: paktool unpack game.pak [folder]")
+    p = sub.add_parser("unpack", help="extract a UE4 PAK; usage: tool unpack game.pak [folder]")
     p.add_argument("pak")
     p.add_argument("output", nargs="?", help="output directory; default: PAK filename without extension")
     p.add_argument("--out", "-o", dest="output_flag", help="same as the optional output path")
@@ -579,7 +579,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_repak_common(p, aes=True)
     p.set_defaults(func=pak_unpack)
 
-    p = sub.add_parser("repack", help="create a PAK; usage: paktool repack folder new.pak")
+    p = sub.add_parser("repack", help="create a PAK; usage: tool repack folder new.pak")
     p.add_argument("source", help="unpacked PAK directory")
     p.add_argument("output", help="new PAK path")
     add_pack_options(p)

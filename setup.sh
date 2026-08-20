@@ -54,16 +54,16 @@ else
 fi
 
 cd "$PROJECT"
-printf '%s\n' "[5/5] Installing repak and the tool command..."
+printf '%s\n' "[5/5] Installing repak and the Tool command..."
 chmod +x install-termux.sh paktool.py paktool_support.py paktool_setup.py paktool_first_run.py update-termux.sh
 SKIP_PACKAGES=1 bash install-termux.sh
 
 export PATH="${PREFIX:-/data/data/com.termux/files/usr}/bin:$PATH"
 command -v repak >/dev/null 2>&1 || fail "repak was not installed."
-command -v paktool >/dev/null 2>&1 || fail "paktool command was not installed."
+command -v tool >/dev/null 2>&1 || fail "tool command was not installed."
 
 printf '%s\n' ""
 printf '%s\n' "Installation complete."
-printf '%s\n' "Open Paktool by typing: paktool"
+printf '%s\n' "Open Paktool by typing: tool"
 
 printf '%s\n' "If Android storage permission was requested, press Allow and run tool again."
